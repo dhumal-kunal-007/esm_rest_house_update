@@ -988,6 +988,9 @@ function AppContent() {
                       gender:
                         guest.gender,
 
+                      actualGender:
+                        guest.actualGender,
+
                       relationship:
                         guest.relationship,
 
@@ -1295,6 +1298,10 @@ function AppContent() {
           id: String(guest.id),
           name: String(guest.guest_name ?? ""),
           gender: String(guest.gender ?? ""),
+          actualGender: String(guest.gender ?? ""),
+          ...(["CHILD", "GUEST"].includes(String(guest.guest_category ?? "").toUpperCase())
+            ? { gender: String(guest.guest_category).toUpperCase() }
+            : {}),
           relationship: String(guest.relationship ?? ""),
           mobile: String(guest.mobile_number ?? ""),
           address: String(guest.address ?? ""),
@@ -3568,6 +3575,9 @@ const handleRoomLockedContinue = async (
 
             gender:
               guest.gender,
+
+            actualGender:
+              guest.actualGender,
 
             relationship:
               guest.relationship,

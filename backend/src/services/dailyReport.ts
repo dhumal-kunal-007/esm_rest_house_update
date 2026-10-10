@@ -18,6 +18,7 @@ export interface DailyReportSnapshot {
     male: number;
     female: number;
     children: number;
+    otherGuests: number;
     guests: number;
     amount: number;
   }>;
@@ -25,6 +26,7 @@ export interface DailyReportSnapshot {
     male: number;
     female: number;
     children: number;
+    otherGuests: number;
     guests: number;
     amount: number;
   };
@@ -79,6 +81,7 @@ interface RoomReportRow extends QueryResultRow {
   male: number | string;
   female: number | string;
   children: number | string;
+  other_guests: number | string;
   guests: number | string;
   amount: number | string;
 }
@@ -235,6 +238,7 @@ const emptyTotals = () => ({
   male: 0,
   female: 0,
   children: 0,
+  otherGuests: 0,
   guests: 0,
   amount: 0,
 });
@@ -250,6 +254,7 @@ const summarizeRooms = (
         male: totals.male + room.male,
         female: totals.female + room.female,
         children: totals.children + room.children,
+        otherGuests: totals.otherGuests + (room.otherGuests ?? 0),
         guests: totals.guests + room.guests,
         amount: totals.amount + room.amount,
       }),
@@ -317,6 +322,7 @@ export const buildDailyReportSnapshot = async (
         a.room_id,
         a.booking_id,
         g.gender,
+        g.guest_category,
         g.date_of_birth,
         COALESCE(bp.total_amount, 0)::NUMERIC AS booking_amount,
         COUNT(*) OVER (PARTITION BY a.booking_id) AS booking_guest_count
@@ -343,26 +349,35 @@ export const buildDailyReportSnapshot = async (
         room_id,
         COUNT(*)::INTEGER AS guests,
         COUNT(*) FILTER (
-          WHERE date_of_birth IS NOT NULL
-            AND date_of_birth > (
-              (SELECT report_date FROM report_period) - INTERVAL '12 years'
-            )
-            AND date_of_birth <= (SELECT report_date FROM report_period)
+          WHERE guest_category = 'CHILD'
+             OR (
+               COALESCE(guest_category, '') NOT IN ('CHILD', 'GUEST')
+               AND date_of_birth IS NOT NULL
+               AND date_of_birth > (
+                 (SELECT report_date FROM report_period) - INTERVAL '12 years'
+               )
+               AND date_of_birth <= (SELECT report_date FROM report_period)
+             )
         )::INTEGER AS children,
         COUNT(*) FILTER (
           WHERE
-            (date_of_birth IS NULL OR date_of_birth <= (
+            UPPER(COALESCE(gender, '')) = 'MALE'
+            AND COALESCE(guest_category, '') NOT IN ('CHILD', 'GUEST')
+            AND (date_of_birth IS NULL OR date_of_birth <= (
               (SELECT report_date FROM report_period) - INTERVAL '12 years'
             ))
-            AND UPPER(COALESCE(gender, '')) = 'MALE'
         )::INTEGER AS male,
         COUNT(*) FILTER (
           WHERE
-            (date_of_birth IS NULL OR date_of_birth <= (
+            UPPER(COALESCE(gender, '')) = 'FEMALE'
+            AND COALESCE(guest_category, '') NOT IN ('CHILD', 'GUEST')
+            AND (date_of_birth IS NULL OR date_of_birth <= (
               (SELECT report_date FROM report_period) - INTERVAL '12 years'
             ))
-            AND UPPER(COALESCE(gender, '')) = 'FEMALE'
         )::INTEGER AS female,
+        COUNT(*) FILTER (
+          WHERE guest_category = 'GUEST'
+        )::INTEGER AS other_guests,
         ROUND(
           SUM(booking_amount / NULLIF(booking_guest_count, 0)),
           2
@@ -377,6 +392,7 @@ export const buildDailyReportSnapshot = async (
       COALESCE(rt.male, 0)::INTEGER AS male,
       COALESCE(rt.female, 0)::INTEGER AS female,
       COALESCE(rt.children, 0)::INTEGER AS children,
+      COALESCE(rt.other_guests, 0)::INTEGER AS other_guests,
       COALESCE(rt.guests, 0)::INTEGER AS guests,
       COALESCE(rt.amount, 0)::NUMERIC(12, 2) AS amount
     FROM rooms r
@@ -529,6 +545,7 @@ export const buildDailyReportSnapshot = async (
     male: Number(row.male),
     female: Number(row.female),
     children: Number(row.children),
+    otherGuests: Number(row.other_guests),
     guests: Number(row.guests),
     amount: Number(row.amount),
   }));
@@ -537,6 +554,7 @@ export const buildDailyReportSnapshot = async (
       male: sum.male + room.male,
       female: sum.female + room.female,
       children: sum.children + room.children,
+      otherGuests: sum.otherGuests + room.otherGuests,
       guests: sum.guests + room.guests,
       amount: sum.amount + room.amount,
     }),

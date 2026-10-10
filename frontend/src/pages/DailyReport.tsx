@@ -11,6 +11,7 @@ interface DailyReportRoom {
   male: number;
   female: number;
   children: number;
+  otherGuests: number;
   guests: number;
   amount: number;
 }
@@ -33,6 +34,7 @@ interface OccupancyTotals {
   male: number;
   female: number;
   children: number;
+  otherGuests: number;
   guests: number;
   amount: number;
 }
@@ -81,6 +83,7 @@ interface AnnualGuestCounts {
   male: number;
   female: number;
   children: number;
+  otherGuests: number;
   total: number;
 }
 
@@ -395,10 +398,11 @@ function DailyReport({ user, onBack }: DailyReportProps) {
         male: sum.male + room.male,
         female: sum.female + room.female,
         children: sum.children + room.children,
+        otherGuests: sum.otherGuests + (room.otherGuests ?? 0),
         guests: sum.guests + room.guests,
         amount: sum.amount + room.amount,
       }),
-      { male: 0, female: 0, children: 0, guests: 0, amount: 0 }
+      { male: 0, female: 0, children: 0, otherGuests: 0, guests: 0, amount: 0 }
     );
 
   const renderRoomTable = (rooms: DailyReportRoom[], title: string) => {
@@ -413,7 +417,8 @@ function DailyReport({ user, onBack }: DailyReportProps) {
               <th>{language === "mr" ? "पुरुष" : "Male"}</th>
               <th>{language === "mr" ? "महिला" : "Female"}</th>
               <th>{language === "mr" ? "बालक" : "Child"}</th>
-              <th>{language === "mr" ? "अतिथी" : "Guest"}</th>
+              <th>{language === "mr" ? "इतर अतिथी" : "Guest (Other)"}</th>
+              <th>{language === "mr" ? "एकूण" : "Total"}</th>
               <th>{language === "mr" ? "रक्कम" : "Amt"}</th>
             </tr>
           </thead>
@@ -424,13 +429,14 @@ function DailyReport({ user, onBack }: DailyReportProps) {
                 <td>{room.male}</td>
                 <td>{room.female}</td>
                 <td>{room.children}</td>
+                <td>{room.otherGuests ?? 0}</td>
                 <td>{room.guests}</td>
                 <td>{formatAmount(room.amount)}</td>
               </tr>
             ))}
             {rooms.length === 0 && (
               <tr>
-                <td colSpan={6} className="daily-report-empty">
+                <td colSpan={7} className="daily-report-empty">
                   {language === "mr" ? "खोल्या उपलब्ध नाहीत" : "No rooms configured"}
                 </td>
               </tr>
@@ -440,6 +446,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
               <td>{totals.male}</td>
               <td>{totals.female}</td>
               <td>{totals.children}</td>
+              <td>{totals.otherGuests}</td>
               <td>{totals.guests}</td>
               <td>{formatAmount(totals.amount)}</td>
             </tr>
@@ -662,8 +669,8 @@ function DailyReport({ user, onBack }: DailyReportProps) {
             </p>
             <small>
               {language === "mr"
-                ? "बालक: नोंदवलेल्या जन्मतारखेनुसार १२ वर्षांखालील; रक्कम बुकिंगच्या एकूण दरातून चेक-इन अतिथींमध्ये विभागली आहे."
-                : "Children are identified from recorded date of birth (under 12); booking amounts are apportioned across checked-in guests."}
+                ? "बालक: निवडलेला Child प्रकार किंवा पूर्वीच्या नोंदीनुसार १२ वर्षांखालील; Guest (Other) स्वतंत्र मोजला जातो."
+                : "Children include the selected Child category and legacy guests under 12; Guest (Other) is counted separately."}
             </small>
           </header>
 
@@ -685,14 +692,14 @@ function DailyReport({ user, onBack }: DailyReportProps) {
               <strong>{language === "mr" ? "AC STR · M / F / CH / G" : "AC STR · M / F / CH / G"}</strong>
               <span>
                 {report.summaries.acOccupancy.male} / {report.summaries.acOccupancy.female} /{" "}
-                {report.summaries.acOccupancy.children} / {report.summaries.acOccupancy.guests}
+                {report.summaries.acOccupancy.children} / {report.summaries.acOccupancy.otherGuests ?? 0}
               </span>
             </div>
             <div>
               <strong>{language === "mr" ? "DM STR · M / F / CH / G" : "DM STR · M / F / CH / G"}</strong>
               <span>
                 {report.summaries.dormitoryOccupancy.male} / {report.summaries.dormitoryOccupancy.female} /{" "}
-                {report.summaries.dormitoryOccupancy.children} / {report.summaries.dormitoryOccupancy.guests}
+                {report.summaries.dormitoryOccupancy.children} / {report.summaries.dormitoryOccupancy.otherGuests ?? 0}
               </span>
             </div>
             <div>
@@ -848,10 +855,10 @@ function DailyReport({ user, onBack }: DailyReportProps) {
             </section>
           )}
           <div className="daily-report-grand-total">
-            <strong>{language === "mr" ? "एकत्रित एकूण · पु / म / बा / अ / रक्कम" : "GRAND TOTAL · M / F / CH / G / AMT"}</strong>
+            <strong>{language === "mr" ? "एकत्रित एकूण · पु / म / बा / अतिथी / एकूण / रक्कम" : "GRAND TOTAL · M / F / CH / GUEST / TOTAL / AMT"}</strong>
             <span>
               {report.totals.male} / {report.totals.female} / {report.totals.children} /{" "}
-              {report.totals.guests} · ₹{formatAmount(report.totals.amount)}
+              {report.totals.otherGuests ?? 0} / {report.totals.guests} · ₹{formatAmount(report.totals.amount)}
             </span>
           </div>
           <div className="daily-report-signoff">
@@ -932,13 +939,13 @@ function DailyReport({ user, onBack }: DailyReportProps) {
           </section>
 
           <section className="annual-report-section annual-report-movement">
-            <h2>{language === "mr" ? "अतिथी आवक-जावक सारांश" : "MONTHLY GUEST MOVEMENT · M / F / CHILD / TOTAL"}</h2>
+            <h2>{language === "mr" ? "अतिथी आवक-जावक सारांश" : "MONTHLY GUEST MOVEMENT · M / F / CHILD / GUEST / TOTAL"}</h2>
             <table>
               <thead>
                 <tr>
                   <th>{language === "mr" ? "महिना" : "Month"}</th>
-                  <th>{language === "mr" ? "चेक-इन · पु / स्त्री / बालक / एकूण" : "Check-ins · M / F / Child / Total"}</th>
-                  <th>{language === "mr" ? "चेक-आउट · पु / स्त्री / बालक / एकूण" : "Check-outs · M / F / Child / Total"}</th>
+                  <th>{language === "mr" ? "चेक-इन · पु / स्त्री / बालक / अतिथी / एकूण" : "Check-ins · M / F / Child / Guest / Total"}</th>
+                  <th>{language === "mr" ? "चेक-आउट · पु / स्त्री / बालक / अतिथी / एकूण" : "Check-outs · M / F / Child / Guest / Total"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -946,20 +953,20 @@ function DailyReport({ user, onBack }: DailyReportProps) {
                   <tr key={month.monthStart}>
                     <th scope="row">{formatMonth(month.monthStart)}</th>
                     <td>
-                      {month.checkIns.male} / {month.checkIns.female} / {month.checkIns.children} / {month.checkIns.total}
+                      {month.checkIns.male} / {month.checkIns.female} / {month.checkIns.children} / {month.checkIns.otherGuests} / {month.checkIns.total}
                     </td>
                     <td>
-                      {month.checkOuts.male} / {month.checkOuts.female} / {month.checkOuts.children} / {month.checkOuts.total}
+                      {month.checkOuts.male} / {month.checkOuts.female} / {month.checkOuts.children} / {month.checkOuts.otherGuests} / {month.checkOuts.total}
                     </td>
                   </tr>
                 ))}
                 <tr className="daily-report-total-row">
                   <th scope="row">{language === "mr" ? "आर्थिक वर्ष एकूण" : "FINANCIAL YEAR TOTAL"}</th>
                   <td>
-                    {annualReport.totals.checkIns.male} / {annualReport.totals.checkIns.female} / {annualReport.totals.checkIns.children} / {annualReport.totals.checkIns.total}
+                    {annualReport.totals.checkIns.male} / {annualReport.totals.checkIns.female} / {annualReport.totals.checkIns.children} / {annualReport.totals.checkIns.otherGuests} / {annualReport.totals.checkIns.total}
                   </td>
                   <td>
-                    {annualReport.totals.checkOuts.male} / {annualReport.totals.checkOuts.female} / {annualReport.totals.checkOuts.children} / {annualReport.totals.checkOuts.total}
+                    {annualReport.totals.checkOuts.male} / {annualReport.totals.checkOuts.female} / {annualReport.totals.checkOuts.children} / {annualReport.totals.checkOuts.otherGuests} / {annualReport.totals.checkOuts.total}
                   </td>
                 </tr>
               </tbody>

@@ -257,17 +257,27 @@ router.post("/", parseBookingFiles, async (req, res) => {
                 });
             }
 
-            if (!["MALE", "FEMALE"].includes(
+            if (!["MALE", "FEMALE", "CHILD", "GUEST"].includes(
                 String(guest.gender ?? "").trim().toUpperCase()
             )) {
                 return res.status(400).json({
                     success: false,
-                    message: `Guest ${index + 1}: select MALE or FEMALE.`,
+                    message: `Guest ${index + 1}: select Male, Female, Child, or Guest.`,
                 });
             }
 
             if (
-                !["SELF", "WIFE", "SON", "DAUGHTER", "MOTHER", "FATHER"].includes(
+                ["CHILD", "GUEST"].includes(String(guest.gender).trim().toUpperCase()) &&
+                !["MALE", "FEMALE"].includes(String(guest.actualGender ?? "").trim().toUpperCase())
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Guest ${index + 1}: actual gender is required for room eligibility.`,
+                });
+            }
+
+            if (
+                !["SELF", "WIFE", "SON", "DAUGHTER", "MOTHER", "FATHER", "OTHER"].includes(
                     String(guest.relationship ?? "").trim().toUpperCase()
                 )
             ) {
@@ -748,6 +758,7 @@ router.post("/", parseBookingFiles, async (req, res) => {
                     INSERT INTO guests (
                         guest_name,
                         gender,
+                        guest_category,
                         date_of_birth,
                         mobile_number,
                         email,
@@ -787,7 +798,8 @@ router.post("/", parseBookingFiles, async (req, res) => {
                         $17,
                         $18,
                         $19,
-                        $20
+                        $20,
+                        $21
                     )
                     RETURNING id;
                     `,
@@ -795,8 +807,11 @@ router.post("/", parseBookingFiles, async (req, res) => {
                         guest.name ||
                             null,
 
-                        guest.gender ||
-                            null,
+                        ["CHILD", "GUEST"].includes(String(guest.gender ?? "").toUpperCase())
+                            ? String(guest.actualGender).toUpperCase()
+                            : String(guest.gender).toUpperCase(),
+
+                        String(guest.gender).toUpperCase(),
 
                         guest.dateOfBirth ||
                             null,
@@ -1097,8 +1112,10 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
             !guest ||
             typeof guest.name !== "string" ||
             !guest.name.trim() ||
-            !["MALE", "FEMALE"].includes(String(guest.gender).toUpperCase()) ||
-            !["SELF", "WIFE", "SON", "DAUGHTER", "MOTHER", "FATHER"]
+            !["MALE", "FEMALE", "CHILD", "GUEST"].includes(String(guest.gender).toUpperCase()) ||
+            (["CHILD", "GUEST"].includes(String(guest.gender).toUpperCase()) &&
+                !["MALE", "FEMALE"].includes(String(guest.actualGender ?? "").toUpperCase())) ||
+            !["SELF", "WIFE", "SON", "DAUGHTER", "MOTHER", "FATHER", "OTHER"]
                 .includes(String(guest.relationship).toUpperCase()) ||
             !/^\d{10}$/.test(String(guest.mobile ?? "")) ||
             (guest.aadhaar && !/^\d{12}$/.test(String(guest.aadhaar))) ||
@@ -1215,7 +1232,7 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
 
         const existingGuestResult = await client.query(
             `
-            SELECT bg.guest_id, g.relationship, g.gender
+            SELECT bg.guest_id, g.relationship, g.gender, g.guest_category
             FROM booking_guests bg
             INNER JOIN guests g ON g.id = bg.guest_id
             WHERE bg.booking_id = $1
@@ -1237,6 +1254,12 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
                 String(row.gender ?? "").toUpperCase(),
             ])
         );
+        const existingGuestCategories = new Map<string, string>(
+            existingGuestResult.rows.map((row) => [
+                String(row.guest_id),
+                String(row.guest_category ?? row.gender ?? "").toUpperCase(),
+            ])
+        );
         if (guestIds.some((id: string) => !existingGuestIds.has(id))) {
             await client.query("ROLLBACK");
             return res.status(400).json({
@@ -1256,17 +1279,21 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
                     SET
                         guest_name = $2,
                         gender = $3,
-                        relationship = $4,
-                        mobile_number = $5,
-                        address = $6,
-                        relationship_proof_type = $7,
-                        relationship_proof_number = $8,
-                        aadhaar_number = COALESCE(NULLIF($9, ''), aadhaar_number)
+                        guest_category = $4,
+                        relationship = $5,
+                        mobile_number = $6,
+                        address = $7,
+                        relationship_proof_type = $8,
+                        relationship_proof_number = $9,
+                        aadhaar_number = COALESCE(NULLIF($10, ''), aadhaar_number)
                     WHERE id = $1
                     `,
                     [
                         guest.id,
                         guest.name.trim(),
+                        ["CHILD", "GUEST"].includes(String(guest.gender).toUpperCase())
+                            ? String(guest.actualGender).toUpperCase()
+                            : String(guest.gender).toUpperCase(),
                         String(guest.gender).toUpperCase(),
                         String(guest.relationship).toUpperCase(),
                         guest.mobile,
@@ -1284,6 +1311,7 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
                     INSERT INTO guests (
                         guest_name,
                         gender,
+                        guest_category,
                         mobile_number,
                         address,
                         relationship,
@@ -1291,11 +1319,14 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
                         relationship_proof_number,
                         aadhaar_number
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     RETURNING id
                     `,
                     [
                         guest.name.trim(),
+                        ["CHILD", "GUEST"].includes(String(guest.gender).toUpperCase())
+                            ? String(guest.actualGender).toUpperCase()
+                            : String(guest.gender).toUpperCase(),
                         String(guest.gender).toUpperCase(),
                         guest.mobile,
                         guest.address || null,
@@ -1350,6 +1381,14 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
                             existingRelationships.get(guest.id) !==
                                 String(guest.relationship ?? "").toUpperCase() ||
                             existingGenders.get(guest.id) !==
+                                (
+                                    ["CHILD", "GUEST"].includes(
+                                        String(guest.gender ?? "").toUpperCase()
+                                    )
+                                        ? String(guest.actualGender ?? "").toUpperCase()
+                                        : String(guest.gender ?? "").toUpperCase()
+                                ) ||
+                            existingGuestCategories.get(guest.id) !==
                                 String(guest.gender ?? "").toUpperCase()
                         )
                     )
@@ -1747,6 +1786,7 @@ router.get("/:bookingId/resume", async (req, res) => {
                         g.id,
                         g.guest_name,
                         g.gender,
+                        g.guest_category,
                         g.relationship,
                         g.mobile_number,
                         g.address,

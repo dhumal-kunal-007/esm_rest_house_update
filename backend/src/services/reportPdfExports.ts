@@ -17,7 +17,7 @@ import {
 
 const execFile = promisify(execFileCallback);
 const businessTimeZone = "Asia/Kolkata";
-const reportRoot = "C:\\ESM_REPORT";
+const reportRoot = "C:\\ESM_REST_HOUSE\\ESM_REPORT";
 
 const reportDirectories: Record<DailyReportType | "ANNUAL", string> = {
   DAILY: path.join(reportRoot, "Daily Report"),
@@ -31,8 +31,8 @@ interface AnnualMonth {
   cashTotal: number;
   upiTotal: number;
   totalCollection: number;
-  checkIns: { male: number; female: number; children: number; total: number };
-  checkOuts: { male: number; female: number; children: number; total: number };
+  checkIns: { male: number; female: number; children: number; otherGuests: number; total: number };
+  checkOuts: { male: number; female: number; children: number; otherGuests: number; total: number };
 }
 
 interface AnnualReport {
@@ -42,8 +42,8 @@ interface AnnualReport {
     cash: number;
     upi: number;
     totalCollection: number;
-    checkIns: { male: number; female: number; children: number; total: number };
-    checkOuts: { male: number; female: number; children: number; total: number };
+    checkIns: { male: number; female: number; children: number; otherGuests: number; total: number };
+    checkOuts: { male: number; female: number; children: number; otherGuests: number; total: number };
   };
 }
 
@@ -134,6 +134,7 @@ const dailyHtml = (
     String(room.male),
     String(room.female),
     String(room.children),
+    String(room.otherGuests ?? 0),
     String(room.guests),
     money(room.amount),
   ]);
@@ -158,7 +159,7 @@ const dailyHtml = (
   ]);
   const sections = [
     `<header class="header"><h1>${escapeHtml(typeLabel.toUpperCase())} REPORT · ESM REST HOUSE</h1><p>AS ON: ${escapeHtml(dateLabel(snapshot.reportDate))}</p><p class="meta">REPORTING PERIOD: ${escapeHtml(dateTimeLabel(snapshot.periodStart))} – ${escapeHtml(dateTimeLabel(snapshot.periodEnd))}</p></header>`,
-    `<h2>ROOM-WISE OCCUPANCY</h2>${table(["Room", "Category", "Male", "Female", "Child", "Guests", "Amount"], roomRows)}<div class="summary"><span>Total guests: ${snapshot.totals.guests}</span><span>Male: ${snapshot.totals.male}</span><span>Female: ${snapshot.totals.female}</span><span>Children: ${snapshot.totals.children}</span><span>Amount: ${money(snapshot.totals.amount)}</span></div>`,
+    `<h2>ROOM-WISE OCCUPANCY</h2>${table(["Room", "Category", "Male", "Female", "Child", "Guest (Other)", "Total Guests", "Amount"], roomRows)}<div class="summary"><span>Total guests: ${snapshot.totals.guests}</span><span>Male: ${snapshot.totals.male}</span><span>Female: ${snapshot.totals.female}</span><span>Children: ${snapshot.totals.children}</span><span>Other guests: ${snapshot.totals.otherGuests ?? 0}</span><span>Amount: ${money(snapshot.totals.amount)}</span></div>`,
     `<h2>CHECK-IN / CHECK-OUT ACTIVITY</h2>${table(["Time", "Action", "Booking", "Guest", "Room / Bed", "Handled by", "Remarks"], activityRows)}`,
     `<h2>UPCOMING / ADVANCE BOOKINGS</h2>${upcomingTable(upcomingBookings)}`,
   ];
@@ -183,10 +184,12 @@ const buildAnnualReport = async (financialYearStart: number): Promise<AnnualRepo
     checkin_male: string | number;
     checkin_female: string | number;
     checkin_children: string | number;
+    checkin_other_guests: string | number;
     checkin_total: string | number;
     checkout_male: string | number;
     checkout_female: string | number;
     checkout_children: string | number;
+    checkout_other_guests: string | number;
     checkout_total: string | number;
   }>(
     `
@@ -203,18 +206,19 @@ const buildAnnualReport = async (financialYearStart: number): Promise<AnnualRepo
         AND UPPER(p.payment_method) IN ('CASH','UPI')
       GROUP BY DATE_TRUNC('month',p.payment_date)::DATE
     ), events AS (
-      SELECT 'CHECK_IN'::TEXT AS event_type, ci.check_in_time AS event_time, g.gender, g.date_of_birth
+      SELECT 'CHECK_IN'::TEXT AS event_type, ci.check_in_time AS event_time, g.gender, g.guest_category, g.date_of_birth
       FROM check_ins ci INNER JOIN guests g ON g.id=ci.guest_id
       WHERE ci.check_in_time >= $1::DATE AND ci.check_in_time < $2::DATE
       UNION ALL
-      SELECT 'CHECK_OUT'::TEXT, co.check_out_time, g.gender, g.date_of_birth
+      SELECT 'CHECK_OUT'::TEXT, co.check_out_time, g.gender, g.guest_category, g.date_of_birth
       FROM check_outs co INNER JOIN guests g ON g.id=co.guest_id
       WHERE co.check_out_time >= $1::DATE AND co.check_out_time < $2::DATE
     ), movements AS (
       SELECT DATE_TRUNC('month',event_time)::DATE AS month_start,event_type,
-        COUNT(*) FILTER (WHERE date_of_birth IS NOT NULL AND date_of_birth > event_time::DATE-INTERVAL '12 years' AND date_of_birth<=event_time::DATE)::INTEGER AS children,
-        COUNT(*) FILTER (WHERE (date_of_birth IS NULL OR date_of_birth<=event_time::DATE-INTERVAL '12 years') AND UPPER(COALESCE(gender,''))='MALE')::INTEGER AS male,
-        COUNT(*) FILTER (WHERE (date_of_birth IS NULL OR date_of_birth<=event_time::DATE-INTERVAL '12 years') AND UPPER(COALESCE(gender,''))='FEMALE')::INTEGER AS female,
+        COUNT(*) FILTER (WHERE guest_category='CHILD' OR (COALESCE(guest_category,'') NOT IN ('CHILD','GUEST') AND date_of_birth IS NOT NULL AND date_of_birth > event_time::DATE-INTERVAL '12 years' AND date_of_birth<=event_time::DATE))::INTEGER AS children,
+        COUNT(*) FILTER (WHERE (guest_category='MALE' OR guest_category IS NULL) AND (date_of_birth IS NULL OR date_of_birth<=event_time::DATE-INTERVAL '12 years') AND UPPER(COALESCE(gender,''))='MALE')::INTEGER AS male,
+        COUNT(*) FILTER (WHERE (guest_category='FEMALE' OR guest_category IS NULL) AND (date_of_birth IS NULL OR date_of_birth<=event_time::DATE-INTERVAL '12 years') AND UPPER(COALESCE(gender,''))='FEMALE')::INTEGER AS female,
+        COUNT(*) FILTER (WHERE guest_category='GUEST')::INTEGER AS other_guests,
         COUNT(*)::INTEGER AS guests
       FROM events GROUP BY DATE_TRUNC('month',event_time)::DATE,event_type
     )
@@ -225,10 +229,12 @@ const buildAnnualReport = async (financialYearStart: number): Promise<AnnualRepo
       COALESCE(ci.male,0)::INTEGER AS checkin_male,
       COALESCE(ci.female,0)::INTEGER AS checkin_female,
       COALESCE(ci.children,0)::INTEGER AS checkin_children,
+      COALESCE(ci.other_guests,0)::INTEGER AS checkin_other_guests,
       COALESCE(ci.guests,0)::INTEGER AS checkin_total,
       COALESCE(co.male,0)::INTEGER AS checkout_male,
       COALESCE(co.female,0)::INTEGER AS checkout_female,
       COALESCE(co.children,0)::INTEGER AS checkout_children,
+      COALESCE(co.other_guests,0)::INTEGER AS checkout_other_guests,
       COALESCE(co.guests,0)::INTEGER AS checkout_total
     FROM months m
     LEFT JOIN payment_months p ON p.month_start=m.month_start
@@ -243,17 +249,18 @@ const buildAnnualReport = async (financialYearStart: number): Promise<AnnualRepo
     cashTotal: Number(row.cash_total),
     upiTotal: Number(row.upi_total),
     totalCollection: Number(row.total_collection),
-    checkIns: { male: Number(row.checkin_male), female: Number(row.checkin_female), children: Number(row.checkin_children), total: Number(row.checkin_total) },
-    checkOuts: { male: Number(row.checkout_male), female: Number(row.checkout_female), children: Number(row.checkout_children), total: Number(row.checkout_total) },
+    checkIns: { male: Number(row.checkin_male), female: Number(row.checkin_female), children: Number(row.checkin_children), otherGuests: Number(row.checkin_other_guests), total: Number(row.checkin_total) },
+    checkOuts: { male: Number(row.checkout_male), female: Number(row.checkout_female), children: Number(row.checkout_children), otherGuests: Number(row.checkout_other_guests), total: Number(row.checkout_total) },
   }));
   const sumCounts = (key: "checkIns" | "checkOuts") => monthly.reduce(
     (totals, month) => ({
       male: totals.male + month[key].male,
       female: totals.female + month[key].female,
       children: totals.children + month[key].children,
+      otherGuests: totals.otherGuests + month[key].otherGuests,
       total: totals.total + month[key].total,
     }),
-    { male: 0, female: 0, children: 0, total: 0 }
+    { male: 0, female: 0, children: 0, otherGuests: 0, total: 0 }
   );
   return {
     financialYearStart,
@@ -277,20 +284,20 @@ const annualHtml = (
     money(month.cashTotal),
     money(month.upiTotal),
     money(month.totalCollection),
-    `${month.checkIns.male} / ${month.checkIns.female} / ${month.checkIns.children} / ${month.checkIns.total}`,
-    `${month.checkOuts.male} / ${month.checkOuts.female} / ${month.checkOuts.children} / ${month.checkOuts.total}`,
+    `${month.checkIns.male} / ${month.checkIns.female} / ${month.checkIns.children} / ${month.checkIns.otherGuests} / ${month.checkIns.total}`,
+    `${month.checkOuts.male} / ${month.checkOuts.female} / ${month.checkOuts.children} / ${month.checkOuts.otherGuests} / ${month.checkOuts.total}`,
   ]);
   monthlyRows.push([
     "FINANCIAL YEAR TOTAL",
     money(report.totals.cash),
     money(report.totals.upi),
     money(report.totals.totalCollection),
-    `${report.totals.checkIns.male} / ${report.totals.checkIns.female} / ${report.totals.checkIns.children} / ${report.totals.checkIns.total}`,
-    `${report.totals.checkOuts.male} / ${report.totals.checkOuts.female} / ${report.totals.checkOuts.children} / ${report.totals.checkOuts.total}`,
+    `${report.totals.checkIns.male} / ${report.totals.checkIns.female} / ${report.totals.checkIns.children} / ${report.totals.checkIns.otherGuests} / ${report.totals.checkIns.total}`,
+    `${report.totals.checkOuts.male} / ${report.totals.checkOuts.female} / ${report.totals.checkOuts.children} / ${report.totals.checkOuts.otherGuests} / ${report.totals.checkOuts.total}`,
   ]);
   return htmlDocument(
     `Annual Report ${report.financialYearStart}-${report.financialYearStart + 1}`,
-    `<header class="header"><h1>ANNUAL REPORT · ESM REST HOUSE</h1><p>FINANCIAL YEAR: ${report.financialYearStart}–${report.financialYearStart + 1}</p><p class="meta">01 Apr ${report.financialYearStart} – 31 Mar ${report.financialYearStart + 1}</p></header><h2>MONTHLY COLLECTION AND GUEST MOVEMENT</h2>${table(["Month", "Cash", "UPI", "Total Collection", "Check-ins M/F/Child/Total", "Check-outs M/F/Child/Total"], monthlyRows)}<h2>UPCOMING / ADVANCE BOOKINGS</h2>${upcomingTable(upcomingBookings)}<p class="note">Generated automatically at 9:00 PM · ESM Rest House</p>`
+    `<header class="header"><h1>ANNUAL REPORT · ESM REST HOUSE</h1><p>FINANCIAL YEAR: ${report.financialYearStart}–${report.financialYearStart + 1}</p><p class="meta">01 Apr ${report.financialYearStart} – 31 Mar ${report.financialYearStart + 1}</p></header><h2>MONTHLY COLLECTION AND GUEST MOVEMENT</h2>${table(["Month", "Cash", "UPI", "Total Collection", "Check-ins M/F/Child/Guest/Total", "Check-outs M/F/Child/Guest/Total"], monthlyRows)}<h2>UPCOMING / ADVANCE BOOKINGS</h2>${upcomingTable(upcomingBookings)}<p class="note">Generated automatically at 9:00 PM · ESM Rest House</p>`
   );
 };
 

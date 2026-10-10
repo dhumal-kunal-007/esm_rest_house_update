@@ -21,6 +21,7 @@ const relationshipOptions = [
   "DAUGHTER",
   "MOTHER",
   "FATHER",
+  "OTHER",
 ] as const;
 
 const relationshipProofOptions = [
@@ -45,6 +46,7 @@ export interface Guest {
 
   name: string;
   gender: string;
+  actualGender: string;
 
   relationship: string;
 
@@ -225,6 +227,7 @@ const createEmptyGuest =
     name: "",
 
     gender: "",
+    actualGender: "",
 
     relationship: "",
 
@@ -578,6 +581,17 @@ function Booking({
               return guest;
             }
 
+            if (field === "gender") {
+              return {
+                ...guest,
+                gender: value,
+                actualGender:
+                  value === "MALE" || value === "FEMALE"
+                    ? value
+                    : guest.actualGender,
+              };
+            }
+
             if (
               field ===
               "relationship"
@@ -926,6 +940,19 @@ function Booking({
           tr(
             `Please select a gender for Guest ${i + 1}.`,
             `कृपया अतिथी ${i + 1} साठी लिंग निवडा.`
+          )
+        );
+        return false;
+      }
+
+      if (
+        ["CHILD", "GUEST"].includes(guest.gender) &&
+        !["MALE", "FEMALE"].includes(guest.actualGender)
+      ) {
+        showValidationMessage(
+          tr(
+            `Please select the actual gender for Guest ${i + 1}.`,
+            `कृपया अतिथी ${i + 1} साठी वास्तविक लिंग निवडा.`
           )
         );
         return false;
@@ -1940,8 +1967,30 @@ function Booking({
                     <option value="FEMALE">
                       {tr("Female", "महिला")}
                     </option>
+                    <option value="CHILD">
+                      {tr("Child", "बालक")}
+                    </option>
+                    <option value="GUEST">
+                      {tr("Guest (Other)", "अतिथी (इतर)")}
+                    </option>
                   </select>
                 </div>
+                {["CHILD", "GUEST"].includes(guest.gender) && (
+                  <div className="form-field">
+                    <label>{tr("Actual Gender *", "वास्तविक लिंग *")}</label>
+                    <select
+                      value={guest.actualGender}
+                      onChange={(event) =>
+                        updateGuest(index, "actualGender", event.target.value)
+                      }
+                      required
+                    >
+                      <option value="">{tr("Select actual gender", "वास्तविक लिंग निवडा")}</option>
+                      <option value="MALE">{tr("Male", "पुरुष")}</option>
+                      <option value="FEMALE">{tr("Female", "महिला")}</option>
+                    </select>
+                  </div>
+                )}
 
                 <div className="form-field full">
                   <label>{tr("Address", "पत्ता")}</label>
@@ -2018,9 +2067,14 @@ function Booking({
                                 "MOTHER",
                                 "आई"
                               )
-                            : tr(
+                            : relationship === "FATHER"
+                            ? tr(
                                 "FATHER",
                                 "वडील"
+                              )
+                            : tr(
+                                "OTHER (GUEST)",
+                                "इतर (अतिथी)"
                               );
 
                         return (
