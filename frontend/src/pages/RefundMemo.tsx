@@ -228,6 +228,30 @@ function RefundMemo({
     confirmed,
     setConfirmed,
   ] = useState(false);
+  const [savingPdf, setSavingPdf] = useState(false);
+  const [pdfSaveError, setPdfSaveError] = useState("");
+
+  const handleSavePdf = async () => {
+    setSavingPdf(true);
+    setPdfSaveError("");
+    try {
+      if (!window.electronAPI) {
+        throw new Error(
+          "Refund memo PDF auto-save is available only in the ESM Rest House desktop app."
+        );
+      }
+      await window.electronAPI.saveRefundMemoPdf(memoNumber);
+    } catch (error) {
+      console.error("Refund memo PDF save failed:", error);
+      setPdfSaveError(
+        error instanceof Error
+          ? error.message
+          : "Unable to save the refund memo PDF."
+      );
+    } finally {
+      setSavingPdf(false);
+    }
+  };
 
   /* =========================================
      TRANSLATION
@@ -2006,9 +2030,12 @@ function RefundMemo({
         <button
           type="button"
           className="secondary-action refund-print-button"
-          onClick={() => window.print()}
+          onClick={handleSavePdf}
+          disabled={savingPdf}
         >
-          {tr("PRINT REFUND MEMO", "रिफंड मेमो प्रिंट करा")}
+          {savingPdf
+            ? tr("SAVING REFUND MEMO PDF…", "रिफंड मेमो PDF सेव्ह होत आहे…")
+            : tr("SAVE REFUND MEMO PDF", "रिफंड मेमो PDF सेव्ह करा")}
         </button>
 
         <button
@@ -2055,6 +2082,12 @@ function RefundMemo({
         </button>
 
       </div>
+      {pdfSaveError && (
+        <p role="alert" className="dashboard-error">
+          {tr("Refund memo PDF was not saved:", "रिफंड मेमो PDF सेव्ह झाला नाही:")}{" "}
+          {pdfSaveError}
+        </p>
+      )}
 
     </main>
   );

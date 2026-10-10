@@ -11,10 +11,10 @@ if (-not (Test-Path $workerPath)) {
 }
 
 $reportFolders = @(
-    "C:\ESM_REPORT\Daily Report",
-    "C:\ESM_REPORT\Weekly Report",
-    "C:\ESM_REPORT\Monthly Report",
-    "C:\ESM_REPORT\Annually Report"
+    "C:\ESM_REST_HOUSE\ESM_REPORT\Daily Report",
+    "C:\ESM_REST_HOUSE\ESM_REPORT\Weekly Report",
+    "C:\ESM_REST_HOUSE\ESM_REPORT\Monthly Report",
+    "C:\ESM_REST_HOUSE\ESM_REPORT\Annually Report"
 )
 foreach ($folder in $reportFolders) {
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
@@ -42,7 +42,7 @@ $principal = New-ScheduledTaskPrincipal `
 
 Register-ScheduledTask `
     -TaskName $taskName `
-    -Description "Generates ESM Rest House daily, weekly, monthly, and annual PDF reports in C:\ESM_REPORT." `
+    -Description "Generates ESM Rest House daily, weekly, monthly, and annual PDF reports in C:\ESM_REST_HOUSE\ESM_REPORT." `
     -Action $action `
     -Trigger $triggers `
     -Settings $settings `

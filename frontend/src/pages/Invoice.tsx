@@ -219,6 +219,9 @@ function Invoice({
   ] =
     useState("");
 
+  const [savingInvoicePdf, setSavingInvoicePdf] = useState(false);
+  const [invoicePdfError, setInvoicePdfError] = useState("");
+
   /* =================================
      TRANSLATION
   ================================== */
@@ -439,12 +442,44 @@ function Invoice({
             <button
               type="button"
               className="continue-booking-button invoice-screen-only"
-              onClick={onContinueToRoomLock}
+              disabled={savingInvoicePdf}
+              onClick={async () => {
+                setSavingInvoicePdf(true);
+                setInvoicePdfError("");
+                try {
+                  if (!window.electronAPI) {
+                    throw new Error(
+                      "Invoice auto-save is available only in the ESM Rest House desktop app."
+                    );
+                  }
+                  await window.electronAPI.saveInvoicePdf(
+                    generatedInvoice.invoiceNumber
+                  );
+                  onContinueToRoomLock();
+                } catch (error) {
+                  console.error("Invoice PDF auto-save failed:", error);
+                  setInvoicePdfError(
+                    error instanceof Error
+                      ? error.message
+                      : "Unable to save the invoice PDF."
+                  );
+                } finally {
+                  setSavingInvoicePdf(false);
+                }
+              }}
             >
-              {tr("CONTINUE TO ROOM LOCK →", "रूम लॉककडे पुढे →")}
+              {savingInvoicePdf
+                ? tr("SAVING INVOICE PDF…", "इनव्हॉइस PDF सेव्ह होत आहे…")
+                : tr("CONTINUE TO ROOM LOCK →", "रूम लॉककडे पुढे →")}
             </button>
           </div>
         </div>
+        {invoicePdfError && (
+          <p role="alert" className="dashboard-error">
+            {tr("Invoice PDF was not saved:", "इनव्हॉइस PDF सेव्ह झाला नाही:")}{" "}
+            {invoicePdfError}
+          </p>
+        )}
 
         <article className="invoice-printable" aria-label="Printable invoice">
           {renderInvoiceCopy("GUEST")}
