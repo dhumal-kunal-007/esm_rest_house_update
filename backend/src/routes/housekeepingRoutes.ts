@@ -209,16 +209,19 @@ router.post(
                 await client.query(
                     `
                     SELECT
-                        id,
-                        room_id,
-                        allotment_id,
-                        task_status
+                        ht.id,
+                        ht.room_id,
+                        ht.allotment_id,
+                        a.bed_id,
+                        ht.task_status
 
-                    FROM housekeeping_tasks
+                    FROM housekeeping_tasks ht
+                    LEFT JOIN allotments a
+                        ON a.id = ht.allotment_id
 
-                    WHERE id = $1
+                    WHERE ht.id = $1
 
-                    FOR UPDATE
+                    FOR UPDATE OF ht
                     `,
                     [
                         taskId,
@@ -247,6 +250,19 @@ router.post(
             const task =
                 taskResult.rows[0];
 
+            const roomStateResult = await client.query(
+                `
+                SELECT
+                    id,
+                    room_status,
+                    is_under_maintenance
+                FROM rooms
+                WHERE id = $1
+                FOR UPDATE
+                `,
+                [task.room_id]
+            );
+
 
             /* =================================
                STATUS CHECK
@@ -268,6 +284,38 @@ router.post(
 
                 return;
 
+            }
+
+
+            const currentOccupantsResult =
+                await client.query(
+                    `
+                    SELECT
+                        COUNT(*)::INTEGER AS current_count
+                    FROM check_ins ci
+                    INNER JOIN allotments a
+                        ON a.id = ci.allotment_id
+                    LEFT JOIN check_outs co
+                        ON co.allotment_id = a.id
+                    WHERE
+                        a.room_id = $1
+                        AND co.id IS NULL
+                    `,
+                    [task.room_id]
+                );
+
+            const currentOccupantCount =
+                Number(currentOccupantsResult.rows[0].current_count);
+
+            if (task.bed_id === null && currentOccupantCount > 0) {
+                await client.query("ROLLBACK");
+
+                res.status(409).json({
+                    message:
+                        "Room-level housekeeping cannot start while a guest is still checked in.",
+                });
+
+                return;
             }
 
 
@@ -310,29 +358,40 @@ router.post(
                ROOM → CLEANING
             ================================= */
 
-            await client.query(
+            const roomStatusUpdateResult = await client.query(
                 `
                 UPDATE rooms
 
                 SET
-                    room_status = 'CLEANING',
+                    room_status = CASE
+                        WHEN $2 > 0 THEN 'OCCUPIED'
+                        ELSE 'CLEANING'
+                    END,
                     updated_at = CURRENT_TIMESTAMP
 
-                WHERE id = $1
+                WHERE
+                    id = $1
+                    AND room_status <> 'STORE'
+                    AND is_under_maintenance = FALSE
+                RETURNING room_status
                 `,
                 [
                     task.room_id,
+                    currentOccupantCount,
                 ]
             );
+
+            const resultingRoomStatus =
+                roomStatusUpdateResult.rows[0]?.room_status ??
+                roomStateResult.rows[0]?.room_status ??
+                "CLEANING";
 
 
             /* =================================
                BED → CLEANING
             ================================= */
 
-            if (
-                task.allotment_id
-            ) {
+            if (task.bed_id) {
 
                 await client.query(
                     `
@@ -346,6 +405,12 @@ router.post(
                         FROM allotments
                         WHERE id = $1
                     )
+                      AND UPPER(bed_status) IN (
+                          'BOOKED',
+                          'OCCUPIED',
+                          'NEEDS_CLEANING',
+                          'CLEANING'
+                      )
                     `,
                     [
                         task.allotment_id,
@@ -361,16 +426,20 @@ router.post(
             res.status(200).json({
 
                 message:
-                    "Housekeeping has been assigned. Room is now in cleaning status.",
+                    resultingRoomStatus === "CLEANING"
+                        ? "Housekeeping has been assigned. Room is now in cleaning status."
+                        : "Housekeeping has been assigned.",
 
                 task:
                     updateResult.rows[0],
 
                 room_status:
-                    "CLEANING",
+                    resultingRoomStatus,
 
                 bed_status:
-                    "CLEANING",
+                    task.bed_id
+                        ? "CLEANING"
+                        : null,
 
             });
 
@@ -555,6 +624,19 @@ router.post(
             const task =
                 taskResult.rows[0];
 
+            const roomStateResult = await client.query(
+                `
+                SELECT
+                    id,
+                    room_status,
+                    is_under_maintenance
+                FROM rooms
+                WHERE id = $1
+                FOR UPDATE
+                `,
+                [task.room_id]
+            );
+
 
             /* =================================
                STATUS CHECK
@@ -584,6 +666,8 @@ router.post(
             ================================= */
 
             let bedId:
+                string | null = null;
+            let cleanedBedStatus:
                 string | null = null;
 
 
@@ -653,29 +737,6 @@ router.post(
 
 
             /* =================================
-               BED → AVAILABLE
-            ================================= */
-
-            if (bedId) {
-
-                await client.query(
-                    `
-                    UPDATE beds
-
-                    SET
-                        bed_status = 'AVAILABLE'
-
-                    WHERE id = $1
-                    `,
-                    [
-                        bedId,
-                    ]
-                );
-
-            }
-
-
-            /* =================================
                ACTIVE ALLOTMENTS
             ================================= */
 
@@ -698,9 +759,9 @@ router.post(
 
 
             const activeCount =
-                activeAllotmentsResult
-                    .rows[0]
-                    .active_count;
+                Number(
+                    activeAllotmentsResult.rows[0].active_count
+                );
 
 
             /* =================================
@@ -732,9 +793,114 @@ router.post(
 
 
             const pendingCleaningCount =
-                pendingCleaningResult
-                    .rows[0]
-                    .pending_count;
+                Number(
+                    pendingCleaningResult.rows[0].pending_count
+                );
+
+
+            const currentOccupantsResult =
+                await client.query(
+                    `
+                    SELECT
+                        COUNT(*)::INTEGER AS current_count
+                    FROM check_ins ci
+                    INNER JOIN allotments a
+                        ON a.id = ci.allotment_id
+                    LEFT JOIN check_outs co
+                        ON co.allotment_id = a.id
+                    WHERE
+                        a.room_id = $1
+                        AND co.id IS NULL
+                    `,
+                    [
+                        task.room_id,
+                    ]
+                );
+
+            const currentOccupantCount =
+                Number(currentOccupantsResult.rows[0].current_count);
+
+
+            /* =================================
+               CLEANED BEDS → AVAILABLE
+            ================================= */
+
+            if (bedId) {
+
+                const cleanedBedResult =
+                    await client.query(
+                    `
+                    UPDATE beds b
+                    SET bed_status = CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM allotments a
+                            WHERE
+                                a.bed_id = b.id
+                                AND a.allotment_status = 'ALLOTTED'
+                        ) THEN 'BOOKED'
+                        ELSE 'AVAILABLE'
+                    END
+                    FROM rooms r
+                    WHERE
+                        b.id = $1
+                        AND r.id = b.room_id
+                        AND r.room_usage = 'GUEST'
+                        AND r.is_active = TRUE
+                        AND r.is_under_maintenance = FALSE
+                        AND r.room_status <> 'STORE'
+                        AND UPPER(b.bed_status) IN (
+                            'BOOKED',
+                            'OCCUPIED',
+                            'NEEDS_CLEANING',
+                            'CLEANING'
+                        )
+                    RETURNING b.bed_status
+                    `,
+                    [
+                        bedId,
+                    ]
+                );
+                cleanedBedStatus =
+                    cleanedBedResult.rows[0]?.bed_status ?? null;
+
+            } else if (
+                pendingCleaningCount === 0
+            ) {
+
+                const cleanedBedsResult = await client.query(
+                    `
+                    UPDATE beds b
+                    SET bed_status = CASE
+                        WHEN $2 > 0 THEN 'BOOKED'
+                        ELSE 'AVAILABLE'
+                    END
+                    FROM rooms r
+                    WHERE
+                        b.room_id = $1
+                        AND b.is_active = TRUE
+                        AND r.id = b.room_id
+                        AND r.room_usage = 'GUEST'
+                        AND r.is_active = TRUE
+                        AND r.is_under_maintenance = FALSE
+                        AND r.room_status <> 'STORE'
+                        AND UPPER(b.bed_status) IN (
+                            'BOOKED',
+                            'OCCUPIED',
+                            'NEEDS_CLEANING',
+                            'CLEANING'
+                        )
+                    RETURNING b.bed_status
+                    `,
+                    [
+                        task.room_id,
+                        activeCount,
+                    ]
+                );
+                cleanedBedStatus =
+                    cleanedBedsResult.rows[0]?.bed_status ?? null;
+
+            }
 
 
             /* =================================
@@ -745,9 +911,7 @@ router.post(
                 string;
 
 
-            if (
-                activeCount > 0
-            ) {
+            if (currentOccupantCount > 0) {
 
                 newRoomStatus =
                     "OCCUPIED";
@@ -758,6 +922,11 @@ router.post(
 
                 newRoomStatus =
                     "CLEANING";
+
+            } else if (activeCount > 0) {
+
+                newRoomStatus =
+                    "BOOKED";
 
             } else {
 
@@ -771,7 +940,7 @@ router.post(
                UPDATE ROOM
             ================================= */
 
-            await client.query(
+            const roomStatusUpdateResult = await client.query(
                 `
                 UPDATE rooms
 
@@ -779,13 +948,22 @@ router.post(
                     room_status = $2,
                     updated_at = CURRENT_TIMESTAMP
 
-                WHERE id = $1
+                WHERE
+                    id = $1
+                    AND room_status <> 'STORE'
+                    AND is_under_maintenance = FALSE
+                RETURNING room_status
                 `,
                 [
                     task.room_id,
                     newRoomStatus,
                 ]
             );
+
+            const resultingRoomStatus =
+                roomStatusUpdateResult.rows[0]?.room_status ??
+                roomStateResult.rows[0]?.room_status ??
+                newRoomStatus;
 
 
             /* =================================
@@ -798,7 +976,7 @@ router.post(
             res.status(200).json({
 
                 message:
-                    newRoomStatus === "AVAILABLE"
+                    resultingRoomStatus === "AVAILABLE"
                         ? "Cleaning completed. Room is now available."
                         : "Cleaning completed for this task.",
 
@@ -806,12 +984,10 @@ router.post(
                     updateTaskResult.rows[0],
 
                 room_status:
-                    newRoomStatus,
+                    resultingRoomStatus,
 
                 bed_status:
-                    bedId
-                        ? "AVAILABLE"
-                        : null,
+                    cleanedBedStatus,
 
             });
 

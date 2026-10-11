@@ -239,8 +239,8 @@ function Housekeeping({
       } else {
         setSuccessMessage(
           isMarathi
-            ? `${roomText} ची साफसफाई पूर्ण झाली आहे. बेड आता उपलब्ध आहे.`
-            : `Cleaning completed for ${roomText}. The bed is now available.`
+            ? `${roomText} ची साफसफाई पूर्ण झाली आहे. उपलब्धता अद्ययावत केली आहे.`
+            : `Cleaning completed for ${roomText}. Accommodation availability has been updated.`
         );
       }
 
