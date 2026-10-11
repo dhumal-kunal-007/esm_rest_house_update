@@ -1454,7 +1454,7 @@ function Availability({
 
     return (
       <div
-        className="room-section"
+        className={`room-section status-${status.status}`}
         key={room.id}
         onClick={(event) => {
           if (
@@ -1624,7 +1624,7 @@ function Availability({
 
     return (
       <div
-        className="room-section"
+        className={`room-section status-${status.status}`}
         key={room.id}
         onClick={(event) => {
           if (
