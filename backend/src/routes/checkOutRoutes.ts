@@ -216,6 +216,16 @@ router.post(
                 return;
             }
 
+            await client.query(
+                `
+                SELECT id
+                FROM rooms
+                WHERE id = $1
+                FOR UPDATE
+                `,
+                [allotment.room_id]
+            );
+
             /*
              * VERIFY BOOKING + ALLOTMENT
              */
