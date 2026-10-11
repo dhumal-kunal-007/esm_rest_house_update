@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../config/db.js";
 import { hasCompleteAcceptedAccommodations } from "../services/bookingWorkflowProgress.js";
+import { isRoomGenderAllowed } from "../services/roomGenderRestriction.js";
 
 const router = Router();
 
@@ -261,6 +262,10 @@ router.post("/", async (req: Request, res: Response) => {
         r.is_under_maintenance,
         r.is_active,
         r.allowed_gender,
+        r.is_bookable,
+        r.gender_restriction,
+        r.room_note,
+        r.room_usage,
         rc.category_name,
         card.room_capacity,
         card.bed_capacity
@@ -292,6 +297,22 @@ router.post("/", async (req: Request, res: Response) => {
       return res.status(409).json({
         success: false,
         message: "Selected room is inactive.",
+      });
+    }
+
+    if (!room.is_bookable || room.room_usage !== "GUEST") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message: `${room.room_number} is reserved for staff/storage and is not bookable.`,
+      });
+    }
+
+    if (!isRoomGenderAllowed(room.gender_restriction, guest.gender)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message: `${room.room_number} is restricted to ${String(room.gender_restriction).toLowerCase()} guests.`,
       });
     }
 

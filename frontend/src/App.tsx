@@ -30,6 +30,7 @@ import DailyReport from "./pages/DailyReport";
 import CreateUser from "./pages/CreateUser";
 import Availability from "./pages/Availability";
 import CustomizeRates from "./pages/CustomizeRates";
+import RoomCustomizations from "./pages/RoomCustomizations";
 import Booking from "./pages/Booking";
 import CheckIn from "./pages/CheckIn";
 import CheckOut from "./pages/CheckOut";
@@ -315,6 +316,7 @@ function AppContent() {
     | "booking"
     | "availability"
     | "customize-rates"
+    | "room-customizations"
     | "create-user"
     | "otherAuthorityRooms"
     | "check-in"
@@ -4570,6 +4572,28 @@ const handleRoomLockedContinue = async (
      DIRECT AVAILABILITY
   ========================================= */
 
+  if (currentPage === "room-customizations") {
+    if (loggedInUser.role !== "ADMIN") {
+      return (
+        <main className="room-customizations-screen">
+          <section className="customize-rates-empty">
+            <strong>Administrator access required</strong>
+            <button type="button" onClick={handleBackToDashboard}>
+              ← Dashboard
+            </button>
+          </section>
+        </main>
+      );
+    }
+
+    return (
+      <>
+        <RoomCustomizations onBack={handleBackToDashboard} />
+        {renderModal()}
+      </>
+    );
+  }
+
   if (currentPage === "customize-rates") {
     if (loggedInUser.role !== "ADMIN") {
       return (
@@ -4814,6 +4838,10 @@ const handleRoomLockedContinue = async (
 
         onCustomizeRates={() => {
           setCurrentPage("customize-rates");
+        }}
+
+        onRoomCustomizations={() => {
+          setCurrentPage("room-customizations");
         }}
 
         onOpenOtherAuthorityRooms={() => {

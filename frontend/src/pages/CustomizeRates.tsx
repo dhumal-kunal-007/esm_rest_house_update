@@ -8,6 +8,9 @@ interface RoomRateCard {
   room_number: string;
   category_name: string;
   total_beds: number;
+  is_bookable: boolean;
+  gender_restriction: string;
+  room_note: string | null;
   room_capacity: number | string | null;
   bed_capacity: number | string | null;
   esm_room_rate: number | string | null;
@@ -82,29 +85,32 @@ const dmRateFields = fields.filter(
 const getRoomGroup = (room: RoomRateCard): RoomGroup => {
   const category = room.category_name.trim().toUpperCase().replace(/[\s-]+/g, "_");
   const number = room.room_number.trim().toUpperCase();
-  if (category === "VIP" || category.includes("VIP") || number.startsWith("VIP")) {
+  if (category === "VIP" || category.includes("VIP")) {
     return "VIP";
   }
   if (
     category === "DORMITORY" ||
     category === "DM" ||
-    category.includes("DORMITORY") ||
-    number.startsWith("DM")
+    category.includes("DORMITORY")
   ) {
     return "DM";
   }
-  if (category === "HALL" || number.startsWith("HALL")) return "HALL";
+  if (category === "HALL") return "HALL";
   if (
     category === "NAC" ||
     category === "NON_AC" ||
-    category.includes("NON_AC") ||
-    number.startsWith("NAC")
+    category.includes("NON_AC")
   ) {
     return "NAC";
   }
-  if (category === "AC" || category.startsWith("AC_") || number.startsWith("AC")) {
+  if (category === "AC" || category.startsWith("AC_")) {
     return "AC";
   }
+  if (number.startsWith("VIP")) return "VIP";
+  if (number.startsWith("DM")) return "DM";
+  if (number.startsWith("HALL")) return "HALL";
+  if (number.startsWith("NAC")) return "NAC";
+  if (number.startsWith("AC")) return "AC";
   return "OTHER";
 };
 
@@ -124,6 +130,9 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
     isMarathi ? marathi : english;
 
   const [rooms, setRooms] = useState<RoomRateCard[]>([]);
+  const [identityDrafts, setIdentityDrafts] = useState<
+    Record<string, { room_number: string; category: "AC" | "NAC" | "DM" }>
+  >({});
   const [dmRates, setDmRates] = useState({
     esm_room_rate: "",
     serving_room_rate: "",
@@ -159,7 +168,9 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
               })
             )
           );
-          const dmRooms = loadedRooms.filter((room) => getRoomGroup(room) === "DM");
+          const dmRooms = loadedRooms.filter(
+            (room) => getRoomGroup(room) === "DM" && room.is_bookable
+          );
           const ratesAreConsistent =
             sameOptionalRate(dmRooms, "esm_room_rate") &&
             sameOptionalRate(dmRooms, "serving_room_rate") &&
@@ -293,6 +304,140 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
     }
   };
 
+  const getIdentityDraft = (room: RoomRateCard) =>
+    identityDrafts[room.id] ?? {
+      room_number: room.room_number,
+      category:
+        getRoomGroup(room) === "NAC"
+          ? "NAC"
+          : getRoomGroup(room) === "DM"
+            ? "DM"
+            : "AC",
+    };
+
+  const updateRoomIdentity = (
+    room: RoomRateCard,
+    field: "room_number" | "category",
+    value: string
+  ) => {
+    const currentDraft = getIdentityDraft(room);
+    setIdentityDrafts((current) => ({
+      ...current,
+      [room.id]: {
+        ...currentDraft,
+        [field]: value,
+      },
+    }));
+    setMessage("");
+  };
+
+  const saveRoomIdentity = async (room: RoomRateCard) => {
+    const key = `identity:${room.id}`;
+    setSavingKey(key);
+    setMessage("");
+    setError("");
+    try {
+      const identity = getIdentityDraft(room);
+      const response = await apiFetch(
+        `http://localhost:5000/api/rooms/${room.id}/identity`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            room_number: identity.room_number,
+            category:
+              identity.category === "AC"
+                ? "AC"
+                : identity.category === "NAC"
+                  ? "NON_AC"
+                  : "DORMITORY",
+          }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to update this room.");
+      }
+      setRooms((current) =>
+        current.map((currentRoom) =>
+          currentRoom.id === room.id
+            ? {
+                ...currentRoom,
+                room_number: data.room.room_number,
+                category_name: data.room.category_name,
+              }
+            : currentRoom
+        )
+      );
+      setIdentityDrafts((current) => {
+        const next = { ...current };
+        delete next[room.id];
+        return next;
+      });
+      setMessage(
+        tr(
+          `Updated ${data.room.room_number} room category and number.`,
+          `${data.room.room_number} खोलीचा प्रकार आणि क्रमांक बदलला.`
+        )
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to update room category or number."
+      );
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const renderRoomIdentityEditor = (room: RoomRateCard) => {
+    const draft = getIdentityDraft(room);
+    return (
+      <div className="customize-room-identity">
+        <label>
+          <span>{tr("Room number", "खोली क्रमांक")}</span>
+          <input
+            aria-label={`${room.room_number} room number`}
+            type="text"
+            maxLength={50}
+            value={draft.room_number}
+            onChange={(event) =>
+              updateRoomIdentity(room, "room_number", event.target.value)
+            }
+          />
+        </label>
+        <label>
+          <span>{tr("Room category", "खोलीचा प्रकार")}</span>
+          <select
+            aria-label={`${room.room_number} room category`}
+            value={draft.category}
+            onChange={(event) =>
+              updateRoomIdentity(
+                room,
+                "category",
+                event.target.value as "AC" | "NAC" | "DM"
+              )
+            }
+          >
+            <option value="AC">AC</option>
+            <option value="NAC">NAC</option>
+            <option value="DM">DM / Dormitory</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={() => void saveRoomIdentity(room)}
+          disabled={savingKey !== null}
+        >
+          {savingKey === `identity:${room.id}`
+            ? tr("Saving…", "जतन होत आहे...")
+            : tr("Save room type / number", "प्रकार / क्रमांक जतन करा")}
+        </button>
+      </div>
+    );
+  };
+
   const toggleMaintenance = async (room: RoomRateCard) => {
     const nextState = !room.is_under_maintenance;
     const key = `maintenance:${room.id}`;
@@ -365,6 +510,21 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
     </div>
   );
 
+  const renderRoomInventoryBadges = (room: RoomRateCard) => (
+    <div className="customize-room-inventory-badges">
+      {room.room_note && <span>{room.room_note}</span>}
+      {!room.is_bookable && (
+        <span>{tr("Not bookable", "बुकिंगसाठी नाही")}</span>
+      )}
+      {room.gender_restriction === "MALE" && (
+        <span>{tr("Male guests only", "फक्त पुरुष")}</span>
+      )}
+      {room.gender_restriction === "FEMALE" && (
+        <span>{tr("Female guests only", "फक्त महिला")}</span>
+      )}
+    </div>
+  );
+
   const saveDmRates = async () => {
     setSavingKey("dm-rates");
     setMessage("");
@@ -384,7 +544,7 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
       }
       setRooms((current) =>
         current.map((room) =>
-          getRoomGroup(room) === "DM"
+          getRoomGroup(room) === "DM" && room.is_bookable
             ? {
                 ...room,
                 esm_room_rate:
@@ -574,12 +734,12 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
                           <p className="customize-rate-warning">
                             {tr(
                               "Existing DM rates differ. Saving these values will standardize all DM rooms.",
-                              "सध्याचे DM दर वेगवेगळे आहेत. जतन केल्यावर सर्व DM खोल्यांचे दर समान होतील."
+                              "सध्याचे DM दर वेगवेगळे आहेत. जतन केल्यावर सर्व बुकिंगसाठी उपलब्ध DM खोल्यांचे दर समान होतील."
                             )}
                           </p>
                         )}
                         <div className="customize-rate-card-footer">
-                          <span>{tr("Applies to every active DM room.", "प्रत्येक सक्रिय DM खोलीला लागू.")}</span>
+                          <span>{tr("Applies to every bookable DM room.", "बुकिंगसाठी उपलब्ध प्रत्येक DM खोलीला लागू.")}</span>
                           <button
                             type="button"
                             onClick={() => void saveDmRates()}
@@ -593,6 +753,33 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
                       </article>
                     </div>
 
+                    <section className="customize-room-identity-list">
+                      <h3>{tr("DM room names and categories", "DM खोलीचे नाव आणि प्रकार")}</h3>
+                      <p>
+                        {tr(
+                          "Change the room number or switch this vacant room to AC or NAC.",
+                          "रिकाम्या खोलीचा क्रमांक बदला किंवा प्रकार AC / NAC करा."
+                        )}
+                      </p>
+                      <div className="customize-rate-grid">
+                        {groupRooms
+                          .filter((room) => room.is_bookable)
+                          .map((room) => (
+                          <article className="customize-rate-card" key={`identity:${room.id}`}>
+                            <div className="customize-rate-card-heading">
+                              <div className="customize-rate-room-mark" aria-hidden="true">DM</div>
+                              <div>
+                                <span>{room.category_name}</span>
+                                <h3>{room.room_number}</h3>
+                                {renderRoomInventoryBadges(room)}
+                              </div>
+                            </div>
+                            {renderRoomIdentityEditor(room)}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+
                     <details className="customize-dm-capacities">
                       <summary>
                         {tr("Manage capacity for each DM room", "प्रत्येक DM खोलीची क्षमता व्यवस्थापित करा")}
@@ -605,6 +792,7 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
                               <div>
                                 <span>{room.category_name}</span>
                                 <h3>{room.room_number}</h3>
+                                {renderRoomInventoryBadges(room)}
                               </div>
                               <div className="customize-rate-bed-summary">
                                 <strong>{room.total_beds}</strong>
@@ -661,12 +849,16 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
                           <div>
                             <span>{room.category_name}</span>
                             <h3>{room.room_number}</h3>
+                            {renderRoomInventoryBadges(room)}
                           </div>
                           <div className="customize-rate-bed-summary">
                             <strong>{room.total_beds}</strong>
                             <span>{tr("physical beds", "उपलब्ध बेड")}</span>
                           </div>
                         </div>
+                        {room.is_bookable &&
+                          ["AC", "NAC", "DM"].includes(group) &&
+                          renderRoomIdentityEditor(room)}
                         {renderMaintenanceControl(room)}
                         {renderRoomFields(room)}
                         <div className="customize-rate-card-footer">

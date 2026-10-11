@@ -74,6 +74,9 @@ router.get("/rate-card", async (req, res) => {
         r.id,
         r.room_number,
         r.total_beds,
+        r.is_bookable,
+        r.gender_restriction,
+        r.room_note,
         rc.category_name,
         r.is_under_maintenance,
         card.room_capacity,
@@ -126,6 +129,7 @@ router.get("/capacities", async (req, res) => {
         ON card.room_id = r.id
       WHERE
         r.is_active = TRUE
+        AND r.is_bookable = TRUE
         AND (
           $1 = 'ADMIN'
           OR EXISTS (
@@ -199,6 +203,7 @@ router.put("/rate-card/category/dormitory", async (req, res) => {
       FROM rooms r
       INNER JOIN room_categories rc ON rc.id = r.category_id
       WHERE r.is_active = TRUE
+        AND r.is_bookable = TRUE
         AND (
           UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
               IN ('DORMITORY', 'DM')
@@ -238,6 +243,7 @@ router.put("/rate-card/category/dormitory", async (req, res) => {
       FROM rooms r
       INNER JOIN room_categories rc ON rc.id = r.category_id
       WHERE r.is_active = TRUE
+        AND r.is_bookable = TRUE
         AND (
           UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
               IN ('DORMITORY', 'DM')
@@ -541,6 +547,596 @@ router.put("/:roomId/maintenance", async (req, res) => {
   }
 });
 
+router.put("/:roomId/identity", async (req, res) => {
+  if (req.authUser?.role !== "ADMIN") {
+    return res.status(403).json({
+      success: false,
+      message: "Only an ADMIN can change room category or room number.",
+    });
+  }
+
+  const { roomId } = req.params;
+  const roomNumber =
+    typeof req.body?.room_number === "string"
+      ? req.body.room_number.trim()
+      : "";
+  const requestedCategory =
+    typeof req.body?.category === "string"
+      ? req.body.category.trim().toUpperCase()
+      : "";
+  const allowedCategories = ["AC", "NON_AC", "DORMITORY"];
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      roomId
+    ) ||
+    roomNumber.length < 1 ||
+    roomNumber.length > 50 ||
+    !allowedCategories.includes(requestedCategory)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "A valid room ID, room number (1–50 characters), and category (AC, NON_AC or DORMITORY) are required.",
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const roomResult = await client.query(
+      `
+      SELECT r.id, r.room_number, r.category_id, r.is_under_maintenance
+      FROM rooms r
+      WHERE r.id = $1 AND r.is_active = TRUE
+      FOR UPDATE OF r
+      `,
+      [roomId]
+    );
+    if (roomResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Active room was not found.",
+      });
+    }
+
+    const room = roomResult.rows[0];
+    const conflictingUse = await client.query(
+      `
+      SELECT 1
+      FROM booking_acceptances ba
+      INNER JOIN bookings b ON b.id = ba.booking_id
+      WHERE ba.room_id = $1
+        AND ba.acceptance_status = 'ACCEPTED'
+        AND b.expected_check_out_date >= CURRENT_DATE
+
+      UNION ALL
+
+      SELECT 1
+      FROM allotments a
+      WHERE a.room_id = $1
+        AND a.allotment_status = 'ALLOTTED'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM check_outs co
+          WHERE co.allotment_id = a.id
+        )
+
+      UNION ALL
+
+      SELECT 1
+      FROM beds bed
+      WHERE bed.room_id = $1
+        AND UPPER(bed.bed_status) IN (
+          'BOOKED',
+          'RESERVED',
+          'OCCUPIED',
+          'CLEANING',
+          'NEEDS_CLEANING'
+        )
+
+      UNION ALL
+
+      SELECT 1
+      FROM housekeeping_tasks ht
+      WHERE ht.room_id = $1
+        AND UPPER(REPLACE(ht.task_status, ' ', '_')) <> 'CLEARED'
+      LIMIT 1
+      `,
+      [roomId]
+    );
+    if ((conflictingUse.rowCount ?? 0) > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message:
+          "Room category or number cannot be changed while it has an active/future booking, allotment, occupied/uncleared bed, or unfinished housekeeping task.",
+      });
+    }
+
+    const duplicateRoom = await client.query(
+      `
+      SELECT 1
+      FROM rooms
+      WHERE UPPER(TRIM(room_number)) = UPPER(TRIM($1))
+        AND id <> $2
+      LIMIT 1
+      `,
+      [roomNumber, roomId]
+    );
+    if ((duplicateRoom.rowCount ?? 0) > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message: "That room number is already in use.",
+      });
+    }
+
+    const categoryResult = await client.query(
+      `
+      SELECT id, category_name
+      FROM room_categories
+      WHERE CASE $1::TEXT
+        WHEN 'AC' THEN UPPER(TRIM(category_name)) = 'AC'
+        WHEN 'NON_AC' THEN
+          UPPER(REPLACE(REPLACE(TRIM(category_name), '-', '_'), ' ', '_'))
+            IN ('NON_AC', 'NAC')
+        WHEN 'DORMITORY' THEN
+          UPPER(REPLACE(REPLACE(TRIM(category_name), '-', '_'), ' ', '_'))
+            IN ('DORMITORY', 'DM')
+      END
+      ORDER BY
+        CASE
+          WHEN UPPER(TRIM(category_name)) = $1 THEN 0
+          ELSE 1
+        END
+      LIMIT 1
+      `,
+      [requestedCategory]
+    );
+    if (categoryResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "The selected room category is not configured.",
+      });
+    }
+
+    if (requestedCategory === "DORMITORY") {
+      const bedsResult = await client.query(
+        "SELECT COUNT(*)::INTEGER AS bed_count FROM beds WHERE room_id = $1 AND is_active = TRUE",
+        [roomId]
+      );
+      if (Number(bedsResult.rows[0].bed_count) === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "This room cannot be changed to DM/Dormitory because it has no active beds configured.",
+        });
+      }
+    }
+
+    const updatedRoom = await client.query(
+      `
+      UPDATE rooms
+      SET
+        room_number = $2,
+        category_id = $3,
+        gender_restriction = CASE
+          WHEN $4 = 'DORMITORY' THEN gender_restriction
+          ELSE 'ANY'
+        END
+      WHERE id = $1
+      RETURNING id, room_number
+      `,
+      [
+        roomId,
+        roomNumber,
+        categoryResult.rows[0].id,
+        requestedCategory,
+      ]
+    );
+    await client.query("COMMIT");
+    return res.json({
+      success: true,
+      room: {
+        ...updatedRoom.rows[0],
+        category_name: categoryResult.rows[0].category_name,
+      },
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Room identity update error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update room category or number.",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.put("/:roomId/customization", async (req, res) => {
+  if (req.authUser?.role !== "ADMIN") {
+    return res.status(403).json({
+      success: false,
+      message: "Only an ADMIN can customize room inventory.",
+    });
+  }
+
+  const { roomId } = req.params;
+  const roomNumber =
+    typeof req.body?.room_number === "string"
+      ? req.body.room_number.trim()
+      : "";
+  const category =
+    typeof req.body?.category === "string"
+      ? req.body.category.trim().toUpperCase()
+      : "";
+  const totalBeds = Number(req.body?.total_beds);
+  const genderRestriction =
+    typeof req.body?.gender_restriction === "string"
+      ? req.body.gender_restriction.trim().toUpperCase()
+      : "";
+  const isBookable = req.body?.is_bookable;
+  const roomNote =
+    typeof req.body?.room_note === "string"
+      ? req.body.room_note.trim() || null
+      : null;
+  const allowedCategories = ["AC", "NON_AC", "DORMITORY", "VIP", "HALL"];
+
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      roomId
+    ) ||
+    roomNumber.length < 1 ||
+    roomNumber.length > 50 ||
+    !allowedCategories.includes(category) ||
+    !Number.isInteger(totalBeds) ||
+    totalBeds < 0 ||
+    !["ANY", "MALE", "FEMALE"].includes(genderRestriction) ||
+    typeof isBookable !== "boolean" ||
+    (roomNote !== null && roomNote.length > 120)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message:
+        "Provide a valid room number, category, non-negative whole bed count, gender restriction, booking status, and room note (maximum 120 characters).",
+    });
+  }
+
+  if (isBookable && totalBeds === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "A bookable room must have at least one bed.",
+    });
+  }
+
+  if (category !== "DORMITORY" && genderRestriction !== "ANY") {
+    return res.status(400).json({
+      success: false,
+      message: "Gender restrictions can only be configured for DM/Dormitory rooms.",
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const roomResult = await client.query(
+      `
+      SELECT r.id, r.room_number, r.category_id
+      FROM rooms r
+      WHERE r.id = $1 AND r.is_active = TRUE
+      FOR UPDATE OF r
+      `,
+      [roomId]
+    );
+    if (roomResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Active room was not found.",
+      });
+    }
+
+    const roomUseResult = await client.query(
+      `
+      SELECT EXISTS (
+        SELECT 1
+        FROM booking_acceptances ba
+        INNER JOIN bookings b ON b.id = ba.booking_id
+        WHERE ba.room_id = $1
+          AND ba.acceptance_status = 'ACCEPTED'
+          AND b.expected_check_out_date >= CURRENT_DATE
+          AND b.booking_status NOT IN ('CANCELLED', 'REJECTED')
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM allotments a
+        WHERE a.room_id = $1
+          AND a.allotment_status = 'ALLOTTED'
+          AND NOT EXISTS (
+            SELECT 1 FROM check_outs co WHERE co.allotment_id = a.id
+          )
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM beds bed
+        WHERE bed.room_id = $1
+          AND bed.is_active = TRUE
+          AND UPPER(bed.bed_status) <> 'AVAILABLE'
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM housekeeping_tasks ht
+        WHERE ht.room_id = $1
+          AND UPPER(REPLACE(ht.task_status, ' ', '_')) <> 'CLEARED'
+      ) AS has_live_use
+      `,
+      [roomId]
+    );
+    if (roomUseResult.rows[0].has_live_use) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message:
+          "Room settings cannot be changed while bookings, allotments, unavailable beds, or unfinished housekeeping exist.",
+      });
+    }
+
+    const categoryResult = await client.query(
+      `
+      SELECT id, category_name
+      FROM room_categories
+      WHERE CASE $1::TEXT
+        WHEN 'AC' THEN UPPER(TRIM(category_name)) = 'AC'
+        WHEN 'NON_AC' THEN
+          UPPER(REPLACE(REPLACE(TRIM(category_name), '-', '_'), ' ', '_'))
+            IN ('NON_AC', 'NAC')
+        WHEN 'DORMITORY' THEN
+          UPPER(REPLACE(REPLACE(TRIM(category_name), '-', '_'), ' ', '_'))
+            IN ('DORMITORY', 'DM')
+        WHEN 'VIP' THEN UPPER(TRIM(category_name)) = 'VIP'
+        WHEN 'HALL' THEN UPPER(TRIM(category_name)) = 'HALL'
+      END
+      ORDER BY
+        CASE WHEN UPPER(TRIM(category_name)) = $1 THEN 0 ELSE 1 END
+      LIMIT 1
+      `,
+      [category]
+    );
+    if (categoryResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: `The ${category} room category is not configured.`,
+      });
+    }
+
+    const duplicateRoom = await client.query(
+      `
+      SELECT 1
+      FROM rooms
+      WHERE UPPER(TRIM(room_number)) = UPPER(TRIM($1))
+        AND id <> $2
+      LIMIT 1
+      `,
+      [roomNumber, roomId]
+    );
+    if (duplicateRoom.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message: "That room number is already in use.",
+      });
+    }
+
+    const targetBedUse = await client.query(
+      `
+      SELECT 1
+      FROM beds bed
+      WHERE bed.room_id = $1
+        AND bed.bed_number > $2
+        AND bed.is_active = TRUE
+        AND EXISTS (
+          SELECT 1
+          FROM allotments a
+          WHERE a.bed_id = bed.id
+            AND a.allotment_status = 'ALLOTTED'
+            AND NOT EXISTS (
+              SELECT 1 FROM check_outs co WHERE co.allotment_id = a.id
+            )
+        )
+      LIMIT 1
+      `,
+      [roomId, totalBeds]
+    );
+    if (targetBedUse.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        success: false,
+        message: "A bed above the new capacity still has an active allotment.",
+      });
+    }
+
+    const updatedRoom = await client.query(
+      `
+      UPDATE rooms
+      SET
+        room_number = $2,
+        category_id = $3,
+        total_beds = $4,
+        room_status = CASE
+          WHEN $4 = 0 THEN 'STORE'
+          WHEN room_status = 'STORE' THEN 'AVAILABLE'
+          ELSE room_status
+        END,
+        is_bookable = $5,
+        gender_restriction = $6,
+        room_note = $7,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, room_number, total_beds, is_bookable,
+        gender_restriction, room_note
+      `,
+      [
+        roomId,
+        roomNumber,
+        categoryResult.rows[0].id,
+        totalBeds,
+        isBookable,
+        genderRestriction,
+        roomNote,
+      ]
+    );
+
+    await client.query(
+      `
+      UPDATE beds
+      SET
+        is_active = bed_number <= $2,
+        bed_status = CASE
+          WHEN bed_number <= $2 THEN 'AVAILABLE'
+          ELSE bed_status
+        END
+      WHERE room_id = $1
+      `,
+      [roomId, totalBeds]
+    );
+    await client.query(
+      `
+      INSERT INTO beds (room_id, bed_number, bed_status, is_active)
+      SELECT $1, generated.bed_number, 'AVAILABLE', TRUE
+      FROM generate_series(1, $2) AS generated(bed_number)
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM beds existing_bed
+        WHERE existing_bed.room_id = $1
+          AND existing_bed.bed_number = generated.bed_number
+      )
+      `,
+      [roomId, totalBeds]
+    );
+    await client.query(
+      `
+      INSERT INTO room_rate_cards (
+        room_id, room_capacity, bed_capacity, updated_by, updated_at
+      )
+      VALUES ($1, NULLIF($2, 0), $2, $3, CURRENT_TIMESTAMP)
+      ON CONFLICT (room_id)
+      DO UPDATE SET
+        room_capacity = EXCLUDED.room_capacity,
+        bed_capacity = EXCLUDED.bed_capacity,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = CURRENT_TIMESTAMP
+      `,
+      [roomId, totalBeds, req.authUser.id]
+    );
+
+    if (!isBookable) {
+      await client.query(
+        `
+        UPDATE room_permissions
+        SET can_book = FALSE,
+            can_allot = FALSE,
+            can_approve = FALSE,
+            emergency_allot = FALSE
+        WHERE room_id = $1
+        `,
+        [roomId]
+      );
+    } else {
+      let permissionTemplate = await client.query(
+        `
+        SELECT DISTINCT ON (permission.role_name)
+          permission.role_name,
+          permission.can_book,
+          permission.can_allot,
+          permission.can_approve,
+          permission.emergency_allot
+        FROM rooms template_room
+        INNER JOIN room_permissions permission
+          ON permission.room_id = template_room.id
+        WHERE template_room.id <> $1
+          AND template_room.is_active = TRUE
+          AND template_room.is_bookable = TRUE
+          AND template_room.category_id = $2
+          AND (permission.can_book OR permission.can_allot)
+        ORDER BY permission.role_name, template_room.room_number
+        `,
+        [roomId, categoryResult.rows[0].id]
+      );
+      if (
+        permissionTemplate.rowCount === 0 &&
+        roomResult.rows[0].category_id === categoryResult.rows[0].id
+      ) {
+        permissionTemplate = await client.query(
+          `
+          SELECT role_name, can_book, can_allot, can_approve, emergency_allot
+          FROM room_permissions
+          WHERE room_id = $1
+            AND (can_book = TRUE OR can_allot = TRUE)
+          ORDER BY role_name
+          `,
+          [roomId]
+        );
+      }
+      if (permissionTemplate.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "No room permissions are configured for this bookable category. Configure an existing room of this category first.",
+        });
+      }
+      for (const permission of permissionTemplate.rows) {
+        await client.query(
+          `
+          INSERT INTO room_permissions (
+            room_id, role_name, can_book, can_allot, can_approve, emergency_allot
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (room_id, role_name)
+          DO UPDATE SET
+            can_book = EXCLUDED.can_book,
+            can_allot = EXCLUDED.can_allot,
+            can_approve = EXCLUDED.can_approve,
+            emergency_allot = EXCLUDED.emergency_allot
+          `,
+          [
+            roomId,
+            permission.role_name,
+            permission.can_book,
+            permission.can_allot,
+            permission.can_approve,
+            permission.emergency_allot,
+          ]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      success: true,
+      room: {
+        ...updatedRoom.rows[0],
+        category_name: categoryResult.rows[0].category_name,
+      },
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Room customization update error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to save room customizations.",
+    });
+  } finally {
+    client.release();
+  }
+});
+
 router.put("/:roomId/rate-card", async (req, res) => {
   if (req.authUser?.role !== "ADMIN") {
     return res.status(403).json({
@@ -710,6 +1306,9 @@ router.get("/", async (req, res) => {
         r.is_active,
         r.allowed_gender,
         r.room_usage,
+        r.is_bookable,
+        r.gender_restriction,
+        r.room_note,
 
         rc.category_name,
 
@@ -747,6 +1346,7 @@ router.get("/", async (req, res) => {
 
       WHERE
         r.is_active = TRUE
+        AND r.is_bookable = TRUE
         AND (
           r.total_beds > 0
           OR r.room_status = 'STORE'
@@ -1331,6 +1931,9 @@ router.get(
             r.room_status,
             r.room_status AS current_status,
             r.is_active,
+            r.is_bookable,
+            r.gender_restriction,
+            r.room_note,
 
             rc.category_name,
 
@@ -1373,6 +1976,7 @@ router.get(
 
           WHERE
             r.is_active = TRUE
+            AND r.is_bookable = TRUE
             AND r.total_beds > 0
             AND rp.can_allot = TRUE
             AND rp.can_book = FALSE
@@ -1581,6 +2185,13 @@ router.get(
           WHERE
             b.room_id = $1
             AND b.is_active = TRUE
+            AND EXISTS (
+              SELECT 1
+              FROM rooms r
+              WHERE r.id = b.room_id
+                AND r.is_active = TRUE
+                AND r.is_bookable = TRUE
+            )
 
           ORDER BY
             b.bed_number;

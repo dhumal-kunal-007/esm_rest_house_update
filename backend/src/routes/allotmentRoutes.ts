@@ -5,6 +5,7 @@ import {
 } from "express";
 
 import { pool } from "../config/db.js";
+import { isRoomGenderAllowed } from "../services/roomGenderRestriction.js";
 
 const router = Router();
 
@@ -904,7 +905,6 @@ router.post(
               row.guest_id
           )
         );
-
       const bookingGuestGenders = new Map<string, string>(
         bookingGuestsResult.rows.map(
           (row: { guest_id: string; gender: string | null }) => [
@@ -1027,8 +1027,11 @@ router.post(
               r.room_number,
               r.room_status,
               r.is_active,
+              r.is_bookable,
               r.total_beds,
               r.allowed_gender,
+              r.gender_restriction,
+              r.room_usage,
               rc.category_name
 
             FROM rooms r
@@ -1072,12 +1075,26 @@ router.post(
 
         }
 
+        if (!room.is_bookable || room.room_usage !== "GUEST") {
+          throw new Error(
+            `Room ${room.room_number} is reserved for staff/storage and cannot be allotted.`
+          );
+        }
+
+        const guestGender = bookingGuestGenders.get(guestId);
         if (
           room.allowed_gender &&
-          bookingGuestGenders.get(guestId) !== room.allowed_gender
+          String(guestGender ?? "").trim().toUpperCase() !==
+            room.allowed_gender
         ) {
           throw new Error(
             `Room ${room.room_number} is reserved for ${room.allowed_gender.toLowerCase()} guests only.`
+          );
+        }
+
+        if (!isRoomGenderAllowed(room.gender_restriction, guestGender)) {
+          throw new Error(
+            `Room ${room.room_number} is restricted to ${String(room.gender_restriction).toLowerCase()} guests.`
           );
         }
 

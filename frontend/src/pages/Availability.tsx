@@ -29,6 +29,8 @@ export interface Room {
   id: string;
   name: string;
   category?: string;
+  genderRestriction?: string;
+  roomNote?: string | null;
   approvalAuthorityRole?: string | null;
   isOtherAuthorityRoom?: boolean;
   currentStatus?: string;
@@ -95,6 +97,70 @@ const normalize = (value: unknown): string =>
     .toUpperCase()
     .replace(/[\s-]+/g, "_");
 
+const toLocalDateInputValue = (date = new Date()): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+const addOneDay = (dateValue: string): string => {
+  const date = new Date(`${dateValue}T12:00:00`);
+  date.setDate(date.getDate() + 1);
+  return toLocalDateInputValue(date);
+};
+
+const formatAvailabilityDate = (
+  dateValue: string,
+  language: string
+): string =>
+  new Date(`${dateValue}T12:00:00`).toLocaleDateString(
+    language === "mr" ? "mr-IN" : "en-IN",
+    { day: "numeric", month: "long", year: "numeric" }
+  );
+
+const getDateKey = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+
+const getCalendarDays = (month: Date): Date[] => {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1);
+  const startDay = new Date(
+    firstDay.getFullYear(),
+    firstDay.getMonth(),
+    1 - firstDay.getDay()
+  );
+  return Array.from({ length: 42 }, (_, index) =>
+    new Date(
+      startDay.getFullYear(),
+      startDay.getMonth(),
+      startDay.getDate() + index
+    )
+  );
+};
+
+const isGuestAllowedByRoomGender = (
+  room: Room,
+  gender: string | null | undefined
+): boolean => {
+  const restriction = normalize(room.genderRestriction || "ANY");
+  return restriction === "ANY" ||
+    restriction === normalize(gender);
+};
+
+const getRoomGenderLabel = (
+  room: Room,
+  isMarathi: boolean
+): string | null => {
+  const restriction = normalize(room.genderRestriction || "ANY");
+  if (restriction === "MALE") {
+    return isMarathi ? "फक्त पुरुष" : "Male guests only";
+  }
+  if (restriction === "FEMALE") {
+    return isMarathi ? "फक्त महिला" : "Female guests only";
+  }
+  return null;
+};
+
 const formatAuthorityRole = (role: string): string => {
   const labels: Record<string, string> = {
     DY_DIRECTOR: "Deputy Director",
@@ -115,11 +181,11 @@ const isVipRoom = (room: Room): boolean => {
   const name = normalize(room.name);
   const category = normalize(room.category);
 
-  return (
-    name.includes("VIP") ||
-    category === "VIP" ||
-    category === "AC_VIP"
-  );
+  if (["AC", "NAC", "NON_AC", "DM", "DORMITORY", "HALL"].includes(category)) {
+    return false;
+  }
+  if (category === "VIP" || category === "AC_VIP") return true;
+  return name.includes("VIP");
 };
 
 const isAcRoom = (room: Room): boolean => {
@@ -143,29 +209,24 @@ const isNacRoom = (room: Room): boolean => {
   const name = normalize(room.name);
   const category = normalize(room.category);
 
-  return (
-    name.startsWith("NAC") ||
-    category === "NAC" ||
-    category === "NON_AC"
-  );
+  if (category) return category === "NAC" || category === "NON_AC";
+  return name.startsWith("NAC");
 };
 
 const isDmRoom = (room: Room): boolean => {
   const name = normalize(room.name);
   const category = normalize(room.category);
 
-  return (
-    name.startsWith("DM") ||
-    category === "DM" ||
-    category === "DORMITORY"
-  );
+  if (category) return category === "DM" || category === "DORMITORY";
+  return name.startsWith("DM");
 };
 
 const isHallRoom = (room: Room): boolean => {
   const name = normalize(room.name);
   const category = normalize(room.category);
 
-  return name === "HALL" || category === "HALL";
+  if (category) return category === "HALL";
+  return name === "HALL";
 };
 
 const isWholeRoom = (room: Room): boolean =>
@@ -206,6 +267,14 @@ function Availability({
     isMarathi ? marathi : english;
 
   const [databaseRooms, setDatabaseRooms] = useState<Room[]>([]);
+  const [availabilityDate, setAvailabilityDate] = useState(
+    () => toLocalDateInputValue()
+  );
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
   const [isLoadingRooms, setIsLoadingRooms] = useState(true);
   const [roomError, setRoomError] = useState("");
   const [roomCapacities, setRoomCapacities] = useState<RoomCapacity[]>([]);
@@ -221,6 +290,25 @@ function Availability({
   const [unavailableRoomId, setUnavailableRoomId] = useState<string | null>(
     null
   );
+
+  const calendarDays = useMemo(
+    () => getCalendarDays(calendarMonth),
+    [calendarMonth]
+  );
+  const monthNames = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, month) =>
+        new Date(2020, month, 1).toLocaleDateString(
+          language === "mr" ? "mr-IN" : "en-IN",
+          { month: "long" }
+        )
+      ),
+    [language]
+  );
+  const calendarYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 26 }, (_, index) => currentYear - 5 + index);
+  }, []);
 
   const requiredGuests = booking?.guests.length ?? 1;
 
@@ -345,6 +433,11 @@ function Availability({
           );
         }
 
+        if (!booking && !authoritySelection && availabilityDate) {
+          query.set("check_in_date", availabilityDate);
+          query.set("expected_check_out_date", addOneDay(availabilityDate));
+        }
+
         if (booking?.checkOut) {
           query.set(
             "expected_check_out_date",
@@ -395,6 +488,9 @@ function Availability({
               is_under_maintenance?: boolean;
               allowed_gender?: string | null;
               room_usage?: string;
+              is_bookable?: boolean;
+              gender_restriction?: string;
+              room_note?: string | null;
               assignments?: RoomAssignment[];
             }) => {
               const bedQuery =
@@ -470,6 +566,8 @@ function Availability({
                 id: room.id,
                 name: room.room_number,
                 category: room.category_name,
+                genderRestriction: room.gender_restriction ?? "ANY",
+                roomNote: room.room_note ?? null,
                 approvalAuthorityRole:
                   room.approval_authority_role ?? null,
                 isOtherAuthorityRoom:
@@ -597,6 +695,7 @@ function Availability({
     };
   }, [
     role,
+    availabilityDate,
     booking?.checkIn,
     booking?.checkOut,
     authoritySelection?.roomId,
@@ -766,9 +865,13 @@ function Availability({
       };
     }
 
+    const isDirectAvailabilityView =
+      !booking && !authoritySelection;
+
     if (
       isWholeRoom(room) &&
-      !(booking?.checkIn && booking.checkOut)
+      !(booking?.checkIn && booking.checkOut) &&
+      !isDirectAvailabilityView
     ) {
       const roomStatus: Partial<
         Record<
@@ -1146,6 +1249,15 @@ function Availability({
     if (!nextGuest) {
       return;
     }
+    if (!isGuestAllowedByRoomGender(room, nextGuest.gender)) {
+      setRoomError(
+        tr(
+          `${room.name} is restricted to ${getRoomGenderLabel(room, false)}.`,
+          `${room.name} मध्ये ${getRoomGenderLabel(room, true)} अतिथीच राहू शकतात.`
+        )
+      );
+      return;
+    }
 
     setSelectedBeds((current) => [
       ...current,
@@ -1175,6 +1287,26 @@ function Availability({
     const guest = booking?.guests.find(
       (g) => g.id === guestId
     );
+    const selection = selectedBeds.find(
+      (item) => item.bedId === bedId
+    );
+    const room = databaseRooms.find(
+      (item) => item.id === selection?.roomId
+    );
+
+    if (
+      guest &&
+      room &&
+      !isGuestAllowedByRoomGender(room, guest.gender)
+    ) {
+      setRoomError(
+        tr(
+          `${room.name} is restricted to ${getRoomGenderLabel(room, false)}.`,
+          `${room.name} मध्ये ${getRoomGenderLabel(room, true)} अतिथीच राहू शकतात.`
+        )
+      );
+      return;
+    }
 
     const duplicate = selectedBeds.some(
       (selection) =>
@@ -1288,6 +1420,15 @@ function Availability({
       const guest = booking.guests[0];
 
       if (!guest) {
+        return;
+      }
+      if (!isGuestAllowedByRoomGender(lockedRoom, guest.gender)) {
+        setRoomError(
+          tr(
+            `${lockedRoom.name} is not available for this guest's gender.`,
+            `${lockedRoom.name} या अतिथीच्या लिंगासाठी उपलब्ध नाही.`
+          )
+        );
         return;
       }
 
@@ -1404,6 +1545,23 @@ function Availability({
     ) {
       return;
     }
+    if (
+      selectedBeds.some((selection) => {
+        const room = databaseRooms.find(
+          (item) => item.id === selection.roomId
+        );
+        const guest = booking.guests.find(
+          (item) => item.id === selection.guestId
+        );
+        return Boolean(
+          room &&
+          guest &&
+          !isGuestAllowedByRoomGender(room, guest.gender)
+        );
+      })
+    ) {
+      return;
+    }
 
     if (authoritySelection) {
       if (
@@ -1473,6 +1631,11 @@ function Availability({
         <div className="room-title">
           <div className="room-title-details">
             <h2>{room.name}</h2>
+            {getRoomGenderLabel(room, isMarathi) && (
+              <span className="room-gender-restriction-badge">
+                {getRoomGenderLabel(room, isMarathi)}
+              </span>
+            )}
 
             {role === "RECEPTIONIST" &&
               room.isOtherAuthorityRoom &&
@@ -1643,6 +1806,12 @@ function Availability({
         <div className="room-title">
           <div className="room-title-details">
             <h2>{room.name}</h2>
+
+            {getRoomGenderLabel(room, isMarathi) && (
+              <span className="room-gender-restriction-badge">
+                {getRoomGenderLabel(room, isMarathi)}
+              </span>
+            )}
 
             {role === "RECEPTIONIST" &&
               room.isOtherAuthorityRoom &&
@@ -1852,8 +2021,14 @@ function Availability({
           "AC / NAC / VIP साठी संपूर्ण खोली किंवा DM / HALL साठी अचूक बेड / जागा निवडा."
         )
       : tr(
-          "View the current room availability.",
-          "सध्याची खोली उपलब्धता पहा."
+          `View room and bed availability for ${formatAvailabilityDate(
+            availabilityDate,
+            language
+          )}.`,
+          `${formatAvailabilityDate(
+            availabilityDate,
+            language
+          )} ची खोली आणि बेड उपलब्धता पहा.`
         );
 
   const authorityRooms = authoritySelection
@@ -1947,12 +2122,213 @@ function Availability({
                 )}
           </span>
 
-          <h1>
-            {tr(
-              "Room & Bed Availability",
-              "खोली आणि बेड उपलब्धता"
+          <div className="availability-title-row">
+            <h1>
+              {tr(
+                "Room & Bed Availability",
+                "खोली आणि बेड उपलब्धता"
+              )}
+            </h1>
+
+            {!booking && !authoritySelection && (
+              <div className="availability-date-picker">
+                <span className="availability-calendar-icon" aria-hidden="true">
+                  ▦
+                </span>
+                <span className="availability-date-picker-text">
+                  <small>
+                    {tr("Check availability for", "या तारखेची उपलब्धता")}
+                  </small>
+                  <strong>
+                    {formatAvailabilityDate(availabilityDate, language)}
+                  </strong>
+                </span>
+                <button
+                  type="button"
+                  className="availability-calendar-button"
+                  aria-label={tr(
+                    "Open availability calendar",
+                    "उपलब्धता दिनदर्शिका उघडा"
+                  )}
+                  title={tr("Choose a date", "तारीख निवडा")}
+                  onClick={() => {
+                    const selectedDate = new Date(
+                      `${availabilityDate}T12:00:00`
+                    );
+                    setCalendarMonth(
+                      new Date(
+                        selectedDate.getFullYear(),
+                        selectedDate.getMonth(),
+                        1
+                      )
+                    );
+                    setIsCalendarOpen((open) => !open);
+                  }}
+                >
+                  {tr("Choose date", "तारीख निवडा")}
+                </button>
+                {isCalendarOpen && (
+                  <div
+                    className="availability-calendar-popover"
+                    role="dialog"
+                    aria-label={tr("Choose availability date", "उपलब्धतेसाठी तारीख निवडा")}
+                  >
+                    <div className="availability-calendar-controls">
+                      <button
+                        type="button"
+                        className="availability-calendar-nav"
+                        aria-label={tr("Previous month", "मागील महिना")}
+                        onClick={() =>
+                          setCalendarMonth(
+                            (month) =>
+                              new Date(
+                                month.getFullYear(),
+                                month.getMonth() - 1,
+                                1
+                              )
+                          )
+                        }
+                      >
+                        ‹
+                      </button>
+                      <select
+                        aria-label={tr("Month", "महिना")}
+                        value={calendarMonth.getMonth()}
+                        onChange={(event) =>
+                          setCalendarMonth(
+                            (month) =>
+                              new Date(
+                                month.getFullYear(),
+                                Number(event.target.value),
+                                1
+                              )
+                          )
+                        }
+                      >
+                        {monthNames.map((month, index) => (
+                          <option value={index} key={month}>
+                            {month}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label={tr("Year", "वर्ष")}
+                        value={calendarMonth.getFullYear()}
+                        onChange={(event) =>
+                          setCalendarMonth(
+                            (month) =>
+                              new Date(
+                                Number(event.target.value),
+                                month.getMonth(),
+                                1
+                              )
+                          )
+                        }
+                      >
+                        {calendarYears.map((year) => (
+                          <option value={year} key={year}>
+                            {year}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="availability-calendar-nav"
+                        aria-label={tr("Next month", "पुढील महिना")}
+                        onClick={() =>
+                          setCalendarMonth(
+                            (month) =>
+                              new Date(
+                                month.getFullYear(),
+                                month.getMonth() + 1,
+                                1
+                              )
+                          )
+                        }
+                      >
+                        ›
+                      </button>
+                    </div>
+                    <div className="availability-calendar-grid" role="grid">
+                      {Array.from({ length: 7 }, (_, day) => {
+                        const weekday = new Date(2020, 5, 7 + day)
+                          .toLocaleDateString(
+                            language === "mr" ? "mr-IN" : "en-IN",
+                            { weekday: "short" }
+                          );
+                        return (
+                          <span
+                            className="availability-calendar-weekday"
+                            role="columnheader"
+                            key={day}
+                          >
+                            {weekday}
+                          </span>
+                        );
+                      })}
+                      {calendarDays.map((day) => {
+                        const dateKey = getDateKey(day);
+                        const isCurrentMonth =
+                          day.getMonth() === calendarMonth.getMonth();
+                        const isSelected = dateKey === availabilityDate;
+                        const isToday = dateKey === toLocalDateInputValue();
+                        return (
+                          <button
+                            type="button"
+                            role="gridcell"
+                            key={dateKey}
+                            className={[
+                              "availability-calendar-day",
+                              !isCurrentMonth ? "outside-month" : "",
+                              isSelected ? "selected" : "",
+                              isToday ? "today" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
+                            aria-pressed={isSelected}
+                            aria-label={formatAvailabilityDate(
+                              dateKey,
+                              language
+                            )}
+                            onClick={() => {
+                              setAvailabilityDate(dateKey);
+                              setCalendarMonth(
+                                new Date(day.getFullYear(), day.getMonth(), 1)
+                              );
+                              setIsCalendarOpen(false);
+                            }}
+                          >
+                            {day.getDate()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="availability-calendar-footer">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const today = new Date();
+                          setAvailabilityDate(toLocalDateInputValue(today));
+                          setCalendarMonth(
+                            new Date(today.getFullYear(), today.getMonth(), 1)
+                          );
+                          setIsCalendarOpen(false);
+                        }}
+                      >
+                        {tr("Today", "आज")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsCalendarOpen(false)}
+                      >
+                        {tr("Close", "बंद करा")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
-          </h1>
+          </div>
 
           <p>{headerDescription}</p>
         </div>
@@ -2248,13 +2624,17 @@ function Availability({
 
         <div>
           <strong>
-            {tr("Stay", "मुक्काम")}
+            {booking || authoritySelection
+              ? tr("Stay", "मुक्काम")
+              : tr("Availability date", "उपलब्धतेची तारीख")}
           </strong>
 
           <p>
-            {booking?.checkIn ?? "—"}
-            {" → "}
-            {booking?.checkOut ?? "—"}
+            {booking
+              ? `${booking.checkIn ?? "—"} → ${booking.checkOut ?? "—"}`
+              : authoritySelection
+                ? "—"
+                : formatAvailabilityDate(availabilityDate, language)}
           </p>
         </div>
 
@@ -2540,7 +2920,15 @@ function Availability({
                       )}
                     </option>
 
-                    {booking.guests.map(
+                    {booking.guests
+                      .filter((guest) => {
+                        const room = databaseRooms.find(
+                          (item) => item.id === bed.roomId
+                        );
+                        return !room ||
+                          isGuestAllowedByRoomGender(room, guest.gender);
+                      })
+                      .map(
                       (guest, index) => (
                         <option
                           key={
@@ -2554,7 +2942,7 @@ function Availability({
                           {guest.name}
                         </option>
                       )
-                    )}
+                      )}
                   </select>
                 </div>
               ))}

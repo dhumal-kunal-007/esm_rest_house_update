@@ -15,6 +15,7 @@ interface DashboardProps {
   onResumeBooking: (bookingId: string) => void;
   onAvailability: () => void;
   onCustomizeRates: () => void;
+  onRoomCustomizations: () => void;
   onOpenOtherAuthorityRooms: () => void;
   onCheckIn: () => void;
   onCheckOut: () => void;
@@ -133,6 +134,7 @@ function Dashboard({
   onResumeBooking,
   onAvailability,
   onCustomizeRates,
+  onRoomCustomizations,
   onOpenOtherAuthorityRooms,
   onCheckIn,
   onCheckOut,
@@ -1332,6 +1334,29 @@ function Dashboard({
                       {language === "mr"
                         ? "खोलीची क्षमता आणि दर व्यवस्थापित करा"
                         : "Manage room capacities and approved rates"}
+                    </small>
+                  </span>
+                  <b>→</b>
+                </button>
+              )}
+
+              {user.role === "ADMIN" && (
+                <button
+                  type="button"
+                  className="dashboard-action action-green"
+                  onClick={onRoomCustomizations}
+                >
+                  <span className="action-symbol">R</span>
+                  <span>
+                    <strong>
+                      {language === "mr"
+                        ? "खोली सानुकूलित करा"
+                        : "Room Customizations"}
+                    </strong>
+                    <small>
+                      {language === "mr"
+                        ? "खोली, बेड क्षमता आणि booking access"
+                        : "Manage rooms, bed capacity and booking access"}
                     </small>
                   </span>
                   <b>→</b>

@@ -116,17 +116,23 @@ const getAuthorityDisplayName = (
 const isMatrixRoom = (
   room: AuthorityRoom
 ) => {
-  const category = String(
-    room.category_name || ""
-  ).toUpperCase();
+  const category = String(room.category_name || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
 
   const roomName = String(
     room.room_number || ""
   ).toUpperCase();
 
+  if (["AC", "NON_AC", "NAC", "VIP", "AC_VIP"].includes(category)) {
+    return false;
+  }
+  if (["DORMITORY", "DM", "HALL"].includes(category)) {
+    return true;
+  }
+
   return (
-    category === "DORMITORY" ||
-    category === "HALL" ||
     roomName.startsWith("DM") ||
     roomName === "HALL"
   );
@@ -139,51 +145,35 @@ const isMatrixRoom = (
 const getRoomType = (
   room: AuthorityRoom
 ) => {
-  const category = String(
-    room.category_name || ""
-  ).toUpperCase();
+  const category = String(room.category_name || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
 
   const roomName = String(
     room.room_number || ""
   ).toUpperCase();
 
-  if (
-    roomName.includes("VIP") ||
-    category === "VIP" ||
-    category === "AC_VIP"
-  ) {
+  if (["VIP", "AC_VIP"].includes(category)) {
     return "VIP";
   }
-
-  if (
-    roomName.startsWith("AC") ||
-    category === "AC"
-  ) {
+  if (category === "AC") {
     return "AC";
   }
-
-  if (
-    roomName.startsWith("NAC") ||
-    category === "NAC" ||
-    category === "NON_AC"
-  ) {
+  if (["NAC", "NON_AC"].includes(category)) {
     return "NAC";
   }
-
-  if (
-    roomName.startsWith("DM") ||
-    category === "DM" ||
-    category === "DORMITORY"
-  ) {
+  if (["DM", "DORMITORY"].includes(category)) {
     return "DM";
   }
-
-  if (
-    roomName === "HALL" ||
-    category === "HALL"
-  ) {
+  if (category === "HALL") {
     return "HALL";
   }
+  if (roomName.includes("VIP")) return "VIP";
+  if (roomName.startsWith("AC")) return "AC";
+  if (roomName.startsWith("NAC")) return "NAC";
+  if (roomName.startsWith("DM")) return "DM";
+  if (roomName === "HALL") return "HALL";
 
   return "OTHER";
 };
