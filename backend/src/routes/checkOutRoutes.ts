@@ -48,13 +48,41 @@ router.get(
 
                     b.check_in_date,
                     b.expected_check_out_date,
+                    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
+                        < b.expected_check_out_date AS is_early_checkout,
 
                     a.allotment_status,
 
                     ci.id AS check_in_id,
                     ci.check_in_time,
 
-                    'CHECKED_IN' AS check_in_status
+                    'CHECKED_IN' AS check_in_status,
+
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM check_ins ci2
+                        INNER JOIN allotments a2
+                            ON a2.id = ci2.allotment_id
+                        LEFT JOIN check_outs co2
+                            ON co2.allotment_id = ci2.allotment_id
+                        WHERE
+                            ci2.booking_id = b.id
+                            AND co2.id IS NULL
+                            AND CASE
+                                WHEN a.bed_id IS NULL THEN
+                                    a2.bed_id IS NOT NULL
+                                    OR a2.room_id <> a.room_id
+                                ELSE a2.id <> a.id
+                            END
+                    ) AS is_final_checkout_group,
+
+                    EXISTS (
+                        SELECT 1
+                        FROM check_outs prior_co
+                        WHERE prior_co.booking_id = b.id
+                          AND (prior_co.check_out_time AT TIME ZONE 'Asia/Kolkata')::date
+                              < b.expected_check_out_date
+                    ) AS has_prior_early_checkout
 
                 FROM allotments a
 
@@ -104,6 +132,267 @@ router.get(
                 message:
                     "Failed to load guests eligible for check-out.",
             });
+        }
+    }
+);
+
+router.post(
+    "/room",
+    async (req: Request, res: Response): Promise<void> => {
+        const {
+            booking_id,
+            room_id,
+            checked_out_by,
+            checkout_type,
+            remarks,
+        } = req.body;
+
+        if (
+            !booking_id ||
+            !room_id ||
+            !checked_out_by ||
+            !["SCHEDULED", "PRE_CHECKOUT"].includes(checkout_type)
+        ) {
+            res.status(400).json({
+                message: "booking_id, room_id, checked_out_by and a valid checkout_type are required.",
+            });
+            return;
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const allotmentsResult = await client.query(
+                `
+                SELECT
+                    a.id AS allotment_id,
+                    a.booking_id,
+                    a.guest_id,
+                    a.room_id,
+                    a.allotment_status,
+                    ci.id AS check_in_id
+                FROM allotments a
+                INNER JOIN check_ins ci ON ci.allotment_id = a.id
+                LEFT JOIN check_outs co ON co.allotment_id = a.id
+                WHERE a.booking_id = $1
+                  AND a.room_id = $2
+                  AND a.bed_id IS NULL
+                  AND a.allotment_status = 'ALLOTTED'
+                  AND co.id IS NULL
+                ORDER BY a.guest_id
+                FOR UPDATE OF a, ci
+                `,
+                [booking_id, room_id]
+            );
+            if (allotmentsResult.rowCount === 0) {
+                await client.query("ROLLBACK");
+                res.status(404).json({
+                    message: "No checked-in guests are eligible for check-out in this room.",
+                });
+                return;
+            }
+
+            await client.query("SELECT id FROM rooms WHERE id = $1 FOR UPDATE", [room_id]);
+            const bookingResult = await client.query(
+                `
+                SELECT id, expected_check_out_date,
+                    (CURRENT_DATE < expected_check_out_date) AS is_early_checkout
+                FROM bookings
+                WHERE id = $1
+                FOR UPDATE
+                `,
+                [booking_id]
+            );
+            if (bookingResult.rowCount === 0) {
+                await client.query("ROLLBACK");
+                res.status(404).json({ message: "Booking was not found." });
+                return;
+            }
+
+            const otherGroupsResult = await client.query(
+                `
+                SELECT COUNT(DISTINCT CASE
+                    WHEN a.bed_id IS NULL THEN a.room_id::text
+                    ELSE a.id::text
+                END)::INTEGER AS remaining_group_count
+                FROM check_ins ci
+                INNER JOIN allotments a ON a.id = ci.allotment_id
+                LEFT JOIN check_outs co ON co.allotment_id = a.id
+                WHERE ci.booking_id = $1
+                  AND co.id IS NULL
+                  AND NOT (a.bed_id IS NULL AND a.room_id = $2)
+                `,
+                [booking_id, room_id]
+            );
+            const isFinalBookingCheckout =
+                Number(otherGroupsResult.rows[0].remaining_group_count) === 0;
+
+            const priorEarlyCheckoutResult = await client.query(
+                `
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM check_outs co
+                    INNER JOIN bookings b ON b.id = co.booking_id
+                    WHERE co.booking_id = $1
+                      AND (co.check_out_time AT TIME ZONE 'Asia/Kolkata')::date
+                          < b.expected_check_out_date
+                ) AS has_prior_early_checkout
+                `,
+                [booking_id]
+            );
+            const isEarlyByDate = bookingResult.rows[0].is_early_checkout;
+            const hasPriorEarlyCheckout =
+                priorEarlyCheckoutResult.rows[0].has_prior_early_checkout;
+
+            if (
+                (isEarlyByDate || (isFinalBookingCheckout && hasPriorEarlyCheckout)) &&
+                checkout_type !== "PRE_CHECKOUT"
+            ) {
+                await client.query("ROLLBACK");
+                res.status(400).json({
+                    message: "A booking with an early departure must complete the Pre Check-Out workflow on its final room/guest group.",
+                });
+                return;
+            }
+
+            if (
+                isFinalBookingCheckout &&
+                (checkout_type === "PRE_CHECKOUT" || hasPriorEarlyCheckout)
+            ) {
+                const refundMemoResult = await client.query(
+                    `
+                    SELECT r.id
+                    FROM refunds r
+                    WHERE r.booking_id = $1
+                      AND r.refund_status = 'APPROVED'
+                      AND EXISTS (
+                        SELECT 1 FROM refund_memos rm WHERE rm.refund_id = r.id
+                      )
+                    LIMIT 1
+                    `,
+                    [booking_id]
+                );
+                if (refundMemoResult.rowCount === 0) {
+                    await client.query("ROLLBACK");
+                    res.status(403).json({
+                        message: "The final check-out requires a calculated refund and an approved refund memo.",
+                    });
+                    return;
+                }
+            }
+
+            const userResult = await client.query(
+                "SELECT id FROM users WHERE id = $1 AND is_active = TRUE",
+                [checked_out_by]
+            );
+            if (userResult.rowCount === 0) {
+                await client.query("ROLLBACK");
+                res.status(403).json({ message: "The checkout user was not found or is inactive." });
+                return;
+            }
+
+            if (isFinalBookingCheckout) {
+                const feedbackResult = await client.query(
+                    "SELECT feedback_status FROM booking_checkout_feedback WHERE booking_id = $1",
+                    [booking_id]
+                );
+                if (feedbackResult.rowCount === 0) {
+                    await client.query("ROLLBACK");
+                    res.status(409).json({
+                        success: false,
+                        message: "Complete or skip the booking feedback form before the final guest checkout.",
+                    });
+                    return;
+                }
+            }
+
+            const checkouts = [];
+            for (const allotment of allotmentsResult.rows) {
+                const checkoutResult = await client.query(
+                    `
+                    INSERT INTO check_outs (
+                        booking_id, guest_id, allotment_id, check_out_time, checked_out_by, remarks
+                    )
+                    VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5)
+                    RETURNING id, booking_id, guest_id, allotment_id, check_out_time, checked_out_by, remarks
+                    `,
+                    [booking_id, allotment.guest_id, allotment.allotment_id, checked_out_by, remarks || null]
+                );
+                checkouts.push(checkoutResult.rows[0]);
+            }
+
+            await client.query(
+                `
+                UPDATE allotments
+                SET allotment_status = 'RELEASED', released_at = CURRENT_TIMESTAMP
+                WHERE booking_id = $1 AND room_id = $2
+                  AND bed_id IS NULL AND allotment_status = 'ALLOTTED'
+                `,
+                [booking_id, room_id]
+            );
+
+            await client.query(
+                `
+                INSERT INTO housekeeping_tasks (
+                    id, room_id, allotment_id, assigned_to, task_status, assigned_at, remarks
+                )
+                VALUES ($1, $2, $3, $4, 'NEEDS CLEANING', CURRENT_TIMESTAMP, $5)
+                `,
+                [
+                    randomUUID(),
+                    room_id,
+                    allotmentsResult.rows[0].allotment_id,
+                    checked_out_by,
+                    remarks ? `Checkout housekeeping: ${String(remarks).trim()}` : "Checkout housekeeping required.",
+                ]
+            );
+
+            await client.query(
+                `
+                UPDATE rooms
+                SET room_status = 'NEEDS_CLEANING', updated_at = CURRENT_TIMESTAMP
+                WHERE id = $1 AND room_status <> 'STORE'
+                `,
+                [room_id]
+            );
+
+            const remainingGuestsResult = await client.query(
+                `
+                SELECT COUNT(*)::INTEGER AS remaining_count
+                FROM check_ins ci
+                LEFT JOIN check_outs co ON co.allotment_id = ci.allotment_id
+                WHERE ci.booking_id = $1 AND co.id IS NULL
+                `,
+                [booking_id]
+            );
+            const bookingComplete =
+                Number(remainingGuestsResult.rows[0].remaining_count) === 0;
+            if (bookingComplete) {
+                await client.query(
+                    "UPDATE bookings SET booking_status = 'CHECKED_OUT', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                    [booking_id]
+                );
+            }
+
+            await client.query("COMMIT");
+            res.status(201).json({
+                message: bookingComplete
+                    ? "Room group checked out and the booking is complete."
+                    : "Room group checked out. The final bill will be generated after the booking's remaining guests check out.",
+                checkout: checkouts[0],
+                checkouts,
+                checked_out_count: checkouts.length,
+                booking_complete: bookingComplete,
+                room_status: "NEEDS_CLEANING",
+                housekeeping_status: "NEEDS_CLEANING",
+            });
+        } catch (error) {
+            await client.query("ROLLBACK");
+            console.error("POST /api/check-outs/room error:", error);
+            res.status(500).json({ message: "Failed to process room-group check-out." });
+        } finally {
+            client.release();
         }
     }
 );
@@ -328,7 +617,8 @@ router.post(
                     `
                     SELECT
                         expected_check_out_date,
-                        CURRENT_DATE < expected_check_out_date
+                        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
+                            < expected_check_out_date
                             AS is_early_checkout
                     FROM bookings
                     WHERE id = $1
@@ -341,8 +631,39 @@ router.post(
                 earlyCheckoutResult.rows[0]
                     ?.is_early_checkout;
 
+            const remainingBookingGuestsResult =
+                await client.query(
+                    `
+                    SELECT COUNT(*)::INTEGER AS remaining_count
+                    FROM check_ins ci
+                    LEFT JOIN check_outs co
+                        ON co.allotment_id = ci.allotment_id
+                    WHERE ci.booking_id = $1
+                        AND co.id IS NULL
+                    `,
+                    [booking_id]
+                );
+            const isFinalBookingCheckout =
+                Number(remainingBookingGuestsResult.rows[0].remaining_count) === 1;
+
+            const priorEarlyCheckoutResult = await client.query(
+                `
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM check_outs co
+                    INNER JOIN bookings b ON b.id = co.booking_id
+                    WHERE co.booking_id = $1
+                      AND (co.check_out_time AT TIME ZONE 'Asia/Kolkata')::date
+                          < b.expected_check_out_date
+                ) AS has_prior_early_checkout
+                `,
+                [booking_id]
+            );
+            const hasPriorEarlyCheckout =
+                priorEarlyCheckoutResult.rows[0].has_prior_early_checkout;
+
             if (
-                isEarlyByDate &&
+                (isEarlyByDate || (isFinalBookingCheckout && hasPriorEarlyCheckout)) &&
                 checkout_type !== "PRE_CHECKOUT"
             ) {
                 await client.query("ROLLBACK");
@@ -353,7 +674,10 @@ router.post(
                 return;
             }
 
-            if (checkout_type === "PRE_CHECKOUT") {
+            if (
+                isFinalBookingCheckout &&
+                (checkout_type === "PRE_CHECKOUT" || hasPriorEarlyCheckout)
+            ) {
                 const refundMemoResult =
                     await client.query(
                         `
@@ -424,22 +748,7 @@ router.post(
                 return;
             }
 
-            const remainingBookingGuestsResult =
-                await client.query(
-                    `
-                    SELECT COUNT(*)::INTEGER AS remaining_count
-                    FROM check_ins ci
-                    LEFT JOIN check_outs co
-                        ON co.allotment_id = ci.allotment_id
-                    WHERE ci.booking_id = $1
-                        AND co.id IS NULL
-                    `,
-                    [booking_id]
-                );
-
-            if (
-                Number(remainingBookingGuestsResult.rows[0].remaining_count) === 1
-            ) {
+            if (isFinalBookingCheckout) {
                 const feedbackResult = await client.query(
                     `
                     SELECT feedback_status
@@ -681,6 +990,9 @@ router.post(
 
                 checkout:
                     checkoutResult.rows[0],
+
+                booking_complete:
+                    remainingCount === 0,
 
                 room_status:
                     newRoomStatus,

@@ -1348,10 +1348,10 @@ function AppContent() {
         guests,
         checkIn: String(savedBooking.check_in_date).includes("T")
           ? String(savedBooking.check_in_date)
-          : `${savedBooking.check_in_date}T14:00`,
+          : `${savedBooking.check_in_date}T13:00`,
         checkOut: String(savedBooking.check_out_date).includes("T")
           ? String(savedBooking.check_out_date)
-          : `${savedBooking.check_out_date}T12:00`,
+          : `${savedBooking.check_out_date}T13:00`,
       };
 
       const acceptedAccommodation: AcceptedAccommodation[] =

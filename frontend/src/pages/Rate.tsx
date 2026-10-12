@@ -65,8 +65,8 @@ const calculateStayDays = (checkIn: string, checkOut: string): number => {
   const difference =
     new Date(`${checkOutDate}T00:00:00`).getTime() -
     new Date(`${checkInDate}T00:00:00`).getTime();
-  return difference > 0
-    ? Math.ceil(difference / (1000 * 60 * 60 * 24))
+  return difference >= 0
+    ? Math.max(1, Math.ceil(difference / (1000 * 60 * 60 * 24)))
     : 0;
 };
 
@@ -211,7 +211,7 @@ function Rate({
           <strong>
             {formatScheduledDateTime(
               checkIn,
-              14,
+              13,
               0,
               isMarathi ? "mr-IN" : "en-IN"
             )}
@@ -222,7 +222,7 @@ function Rate({
           <strong>
             {formatScheduledDateTime(
               checkOut,
-              12,
+              13,
               0,
               isMarathi ? "mr-IN" : "en-IN"
             )}

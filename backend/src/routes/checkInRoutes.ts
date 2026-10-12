@@ -73,6 +73,7 @@ router.get(
           a.id AS allotment_id,
           a.booking_id,
           b.booking_reference,
+          sm.full_name AS booking_person_name,
 
           a.guest_id,
           g.guest_name,
@@ -105,6 +106,9 @@ router.get(
 
         INNER JOIN bookings b
           ON b.id = a.booking_id
+
+        LEFT JOIN booking_service_members sm
+          ON sm.booking_id = b.id
 
         INNER JOIN guests g
           ON g.id = a.guest_id
@@ -171,6 +175,371 @@ router.get(
   }
 );
 
+router.post(
+  "/room",
+  async (req: Request, res: Response): Promise<void> => {
+    const { booking_id, room_id, checked_in_by, remarks } = req.body;
+    if (!booking_id || !room_id || !checked_in_by) {
+      res.status(400).json({
+        message: "Booking, room and checking-in user are required.",
+      });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const allotmentsResult = await client.query(
+        `
+        SELECT a.id, a.guest_id, a.room_id
+        FROM allotments a
+        WHERE a.booking_id = $1
+          AND a.room_id = $2
+          AND a.bed_id IS NULL
+          AND a.allotment_status = 'ALLOTTED'
+        ORDER BY a.guest_id
+        FOR UPDATE
+        `,
+        [booking_id, room_id]
+      );
+      if (allotmentsResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ message: "No active room allotments were found." });
+        return;
+      }
+
+      await client.query("SELECT id FROM rooms WHERE id = $1 FOR UPDATE", [room_id]);
+
+      const bookingResult = await client.query(
+        `
+        SELECT id, booking_reference, approval_status, acceptance_status, check_in_date
+        FROM bookings
+        WHERE id = $1
+        FOR UPDATE
+        `,
+        [booking_id]
+      );
+      if (bookingResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ message: "Booking was not found." });
+        return;
+      }
+      const booking = bookingResult.rows[0];
+      if (booking.approval_status !== "APPROVED" || booking.acceptance_status !== "ACCEPTED") {
+        await client.query("ROLLBACK");
+        res.status(403).json({
+          message: "Room check-in requires an approved booking and accepted accommodation.",
+          approval_status: booking.approval_status,
+          acceptance_status: booking.acceptance_status,
+        });
+        return;
+      }
+
+      const paymentStatus = await getSuccessfulPaymentStatus(client);
+      const paymentResult = await client.query(
+        `
+        SELECT 1
+        FROM payments p
+        INNER JOIN booking_invoices bi
+          ON bi.payment_id = p.id AND bi.booking_id = p.booking_id
+        WHERE p.booking_id = $1 AND p.payment_status = $2
+        LIMIT 1
+        `,
+        [booking_id, paymentStatus]
+      );
+      if (paymentResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(403).json({ message: "Check-in requires a successful payment and its invoice." });
+        return;
+      }
+
+      const turnoverResult = await client.query(
+        `
+        SELECT
+          (CURRENT_TIMESTAMP AT TIME ZONE $2::text) >=
+            ($1::date + $3::time) AS check_in_available,
+          EXISTS (
+            SELECT 1
+            FROM check_ins ci
+            INNER JOIN allotments pa ON pa.id = ci.allotment_id
+            LEFT JOIN check_outs co ON co.allotment_id = pa.id
+            WHERE pa.room_id = $4
+              AND pa.booking_id <> $5
+              AND pa.bed_id IS NULL
+              AND pa.allotment_status = 'ALLOTTED'
+              AND co.id IS NULL
+          ) AS previous_guest_present,
+          EXISTS (
+            SELECT 1
+            FROM housekeeping_tasks ht
+            WHERE ht.room_id = $4
+              AND ht.task_status <> 'CLEARED'
+          ) AS housekeeping_incomplete
+        `,
+        [booking.check_in_date, BOOKING_TIME_ZONE, BOOKING_CHECK_IN_TIME, room_id, booking_id]
+      );
+      const turnover = turnoverResult.rows[0];
+      if (!turnover.check_in_available) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ message: `Check-in is available from ${BOOKING_CHECK_IN_TIME} on the scheduled arrival date.` });
+        return;
+      }
+      if (turnover.previous_guest_present || turnover.housekeeping_incomplete) {
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          message: turnover.previous_guest_present
+            ? "Check-in is blocked until the previous guest has checked out."
+            : "Check-in is blocked until housekeeping has cleared the room.",
+        });
+        return;
+      }
+
+      const userResult = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND is_active = TRUE",
+        [checked_in_by]
+      );
+      if (userResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(403).json({ message: "The checking-in user was not found or is inactive." });
+        return;
+      }
+
+      const allotmentIds = allotmentsResult.rows.map((row: { id: string }) => row.id);
+      const existingResult = await client.query(
+        "SELECT allotment_id FROM check_ins WHERE allotment_id = ANY($1::uuid[])",
+        [allotmentIds]
+      );
+      const existingIds = new Set(existingResult.rows.map((row: { allotment_id: string }) => row.allotment_id));
+      const pendingAllotments = allotmentsResult.rows.filter(
+        (row: { id: string }) => !existingIds.has(row.id)
+      );
+      if (pendingAllotments.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ message: "All guests assigned to this room are already checked in." });
+        return;
+      }
+
+      const checkIns = [];
+      for (const allotment of pendingAllotments) {
+        const inserted = await client.query(
+          `
+          INSERT INTO check_ins (booking_id, guest_id, allotment_id, check_in_time, checked_in_by, remarks)
+          VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5)
+          RETURNING id, booking_id, guest_id, allotment_id, check_in_time
+          `,
+          [booking_id, allotment.guest_id, allotment.id, checked_in_by, remarks ?? null]
+        );
+        checkIns.push(inserted.rows[0]);
+      }
+
+      await client.query(
+        "UPDATE rooms SET room_status = 'OCCUPIED', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        [room_id]
+      );
+
+      const bookingGuestCounts = await client.query(
+        `
+        SELECT
+          (SELECT COUNT(*)::INTEGER FROM booking_guests WHERE booking_id = $1) AS total_guests,
+          (SELECT COUNT(*)::INTEGER FROM check_ins WHERE booking_id = $1) AS checked_in_guests
+        `,
+        [booking_id]
+      );
+      if (Number(bookingGuestCounts.rows[0].total_guests) > 0 &&
+          Number(bookingGuestCounts.rows[0].checked_in_guests) >= Number(bookingGuestCounts.rows[0].total_guests)) {
+        await client.query(
+          "UPDATE bookings SET booking_status = 'CHECKED_IN', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+          [booking_id]
+        );
+      }
+
+      await client.query("COMMIT");
+      res.status(201).json({
+        message: "All guests assigned to the room were checked in.",
+        checkIns,
+        checked_in_count: checkIns.length,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("POST /api/check-ins/room error:", error);
+      res.status(500).json({ message: "Unable to complete room check-in." });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+router.post(
+  "/manual-room",
+  async (req: Request, res: Response): Promise<void> => {
+    if (req.authUser?.role !== "ADMIN" && req.authUser?.role !== "RECEPTIONIST") {
+      res.status(403).json({ message: "Only administrators and receptionists can record a manual pre-checkin." });
+      return;
+    }
+
+    const {
+      booking_id,
+      room_id,
+      checked_in_by,
+      actual_check_in_date,
+      actual_check_in_time = "13:00",
+      amount,
+      payment_method = "CASH",
+      remarks,
+    } = req.body;
+    if (!booking_id || !room_id || !checked_in_by || !actual_check_in_date) {
+      res.status(400).json({ message: "Booking, room, user and actual check-in date are required." });
+      return;
+    }
+
+    let actualCheckInTimestamp: string;
+    try {
+      actualCheckInTimestamp = resolveActualCheckInTimestamp(actual_check_in_date, actual_check_in_time);
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Invalid check-in date or time." });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const allotmentsResult = await client.query(
+        `
+        SELECT a.id, a.guest_id
+        FROM allotments a
+        WHERE a.booking_id = $1 AND a.room_id = $2
+          AND a.bed_id IS NULL AND a.allotment_status = 'ALLOTTED'
+        ORDER BY a.guest_id
+        FOR UPDATE
+        `,
+        [booking_id, room_id]
+      );
+      if (allotmentsResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ message: "No active room allotments were found." });
+        return;
+      }
+      await client.query("SELECT id FROM rooms WHERE id = $1 FOR UPDATE", [room_id]);
+
+      const bookingResult = await client.query(
+        "SELECT id, approval_status, acceptance_status FROM bookings WHERE id = $1 FOR UPDATE",
+        [booking_id]
+      );
+      if (bookingResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ message: "Booking was not found." });
+        return;
+      }
+      const booking = bookingResult.rows[0];
+      if (booking.approval_status !== "APPROVED" || booking.acceptance_status !== "ACCEPTED") {
+        await client.query("ROLLBACK");
+        res.status(403).json({ message: "Manual room check-in requires an approved booking and accepted accommodation." });
+        return;
+      }
+      const userResult = await client.query(
+        "SELECT id FROM users WHERE id = $1 AND is_active = TRUE",
+        [checked_in_by]
+      );
+      if (userResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(403).json({ message: "The checking-in user was not found or is inactive." });
+        return;
+      }
+
+      const allotmentIds = allotmentsResult.rows.map((row: { id: string }) => row.id);
+      const existingResult = await client.query(
+        "SELECT allotment_id FROM check_ins WHERE allotment_id = ANY($1::uuid[])",
+        [allotmentIds]
+      );
+      const existingIds = new Set(existingResult.rows.map((row: { allotment_id: string }) => row.allotment_id));
+      const pendingAllotments = allotmentsResult.rows.filter(
+        (row: { id: string }) => !existingIds.has(row.id)
+      );
+      if (pendingAllotments.length === 0) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ message: "All guests assigned to this room are already checked in." });
+        return;
+      }
+
+      const paymentStatus = await getSuccessfulPaymentStatus(client);
+      const checkIns = [];
+      for (const allotment of pendingAllotments) {
+        const inserted = await client.query(
+          `
+          INSERT INTO check_ins (booking_id, guest_id, allotment_id, check_in_time, checked_in_by, remarks)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          RETURNING id, booking_id, guest_id, allotment_id, check_in_time
+          `,
+          [
+            booking_id,
+            allotment.guest_id,
+            allotment.id,
+            actualCheckInTimestamp,
+            checked_in_by,
+            remarks ?? "Manual pre-checkin entry created by authorized staff.",
+          ]
+        );
+        checkIns.push(inserted.rows[0]);
+      }
+
+      await client.query(
+        "UPDATE rooms SET room_status = 'OCCUPIED', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        [room_id]
+      );
+      if (Number(amount) > 0) {
+        await client.query(
+          `
+          INSERT INTO payments (
+            booking_id, amount, payment_method, transaction_number, payment_date, payment_status, remarks, received_by
+          )
+          VALUES ($1, $2, $3, NULL, $4, $5, $6, $7)
+          `,
+          [
+            booking_id,
+            Number(amount),
+            String(payment_method || "CASH").toUpperCase(),
+            actual_check_in_date,
+            paymentStatus,
+            remarks ? String(remarks).trim() : "Manual pre-checkin entry recorded by authorized staff.",
+            checked_in_by,
+          ]
+        );
+      }
+
+      const bookingGuestCounts = await client.query(
+        `
+        SELECT
+          (SELECT COUNT(*)::INTEGER FROM booking_guests WHERE booking_id = $1) AS total_guests,
+          (SELECT COUNT(*)::INTEGER FROM check_ins WHERE booking_id = $1) AS checked_in_guests
+        `,
+        [booking_id]
+      );
+      if (Number(bookingGuestCounts.rows[0].total_guests) > 0 &&
+          Number(bookingGuestCounts.rows[0].checked_in_guests) >= Number(bookingGuestCounts.rows[0].total_guests)) {
+        await client.query(
+          "UPDATE bookings SET booking_status = 'CHECKED_IN', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+          [booking_id]
+        );
+      }
+      await client.query("COMMIT");
+      res.status(201).json({
+        message: "Manual pre-checkin recorded for all guests assigned to the room.",
+        checkIns,
+        checked_in_count: checkIns.length,
+        payment_created: Number(amount) > 0,
+        actual_check_in_time: actualCheckInTimestamp,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("POST /api/check-ins/manual-room error:", error);
+      res.status(500).json({ message: "Unable to record manual room pre-checkin." });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 
 /* =========================================
    POST MANUAL PRE-CHECKIN
@@ -200,7 +569,7 @@ router.post(
       bed_id = null,
       checked_in_by,
       actual_check_in_date,
-      actual_check_in_time = "12:00",
+      actual_check_in_time = "13:00",
       amount,
       payment_method = "CASH",
       remarks,

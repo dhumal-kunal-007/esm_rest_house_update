@@ -397,11 +397,11 @@ router.post("/", parseBookingFiles, async (req, res) => {
 
            CURRENT:
            - Check-in must be TODAY.
-           - Check-out must be after check-in.
+           - Check-out may be the same date as check-in.
 
            ADVANCE:
            - Check-in must be AFTER TODAY.
-           - Check-out must be after check-in.
+           - Check-out may be the same date as check-in.
 
            Dates are handled as YYYY-MM-DD strings
            to avoid browser/server timezone problems.
@@ -485,14 +485,14 @@ router.post("/", parseBookingFiles, async (req, res) => {
         ========================================= */
 
         if (
-            checkOutDate <=
+            checkOutDate <
             checkInDate
         ) {
 
             return res.status(400).json({
                 success: false,
                 message:
-                    "Expected check-out date must be after check-in date",
+                    "Expected check-out date cannot be before check-in date",
             });
 
         }
@@ -1065,7 +1065,7 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
         !/^\d{4}-\d{2}-\d{2}$/.test(checkInDate) ||
         typeof checkOutDate !== "string" ||
         !/^\d{4}-\d{2}-\d{2}$/.test(checkOutDate) ||
-        checkOutDate <= checkInDate ||
+        checkOutDate < checkInDate ||
         !Number.isInteger(guestCount) ||
         guestCount < 1 ||
         guestCount > 10 ||

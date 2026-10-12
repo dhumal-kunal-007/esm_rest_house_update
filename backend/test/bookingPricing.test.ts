@@ -36,6 +36,20 @@ test("calculates room rates from guest type and duration", () => {
   assert.equal(pricing.totalAmount, 3000);
 });
 
+test("charges one day for a same-day check-in and check-out", () => {
+  const pricing = calculateBookingPricing({
+    guestType: "ESM",
+    accommodationCategory: "AC",
+    checkInDate: "2026-10-12",
+    checkOutDate: "2026-10-12",
+    roomCount: 1,
+    unitRates: [500],
+  });
+
+  assert.equal(pricing.accommodationDays, 1);
+  assert.equal(pricing.accommodationAmount, 500);
+});
+
 test("charges a room rate once for multiple occupants using beds in one room", () => {
   for (const guestType of ["SERVING", "CIVILIAN"] as const) {
     const pricing = calculateBookingPricing({
@@ -50,6 +64,21 @@ test("charges a room rate once for multiple occupants using beds in one room", (
     assert.equal(pricing.accommodationRate, 100);
     assert.equal(pricing.totalAmount, 100);
   }
+});
+
+test("rejects a check-out date before check-in", () => {
+  assert.throws(
+    () =>
+      calculateBookingPricing({
+        guestType: "ESM",
+        accommodationCategory: "AC",
+        checkInDate: "2026-10-12",
+        checkOutDate: "2026-10-11",
+        roomCount: 1,
+        unitRates: [500],
+      }),
+    BookingPricingInputError
+  );
 });
 
 test("calculates dormitory totals from mixed per-bed rates", () => {

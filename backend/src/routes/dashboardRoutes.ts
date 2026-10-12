@@ -357,10 +357,12 @@ router.get("/summary", async (req, res) => {
       ) allotted_room
         ON TRUE
 
+      WHERE
+        b.created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'
+        AND b.created_at <= CURRENT_TIMESTAMP
+
       ORDER BY
         b.created_at DESC
-
-      LIMIT 8
     `, [req.authUser?.id, req.authUser?.role]);
 
 

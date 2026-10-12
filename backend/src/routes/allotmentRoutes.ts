@@ -357,12 +357,24 @@ function datesOverlap(
   requestedCheckIn: string,
   requestedCheckOut: string
 ): boolean {
+  const addOneDay = (date: string): string => {
+    const [year, month, day] = date.split("-").map(Number);
+    return new Date(
+      Date.UTC(year, month - 1, day + 1)
+    ).toISOString().slice(0, 10);
+  };
+  const existingEnd =
+    existingCheckOut <= existingCheckIn
+      ? addOneDay(existingCheckIn)
+      : existingCheckOut;
+  const requestedEnd =
+    requestedCheckOut <= requestedCheckIn
+      ? addOneDay(requestedCheckIn)
+      : requestedCheckOut;
 
   return (
-    existingCheckIn <
-      requestedCheckOut &&
-    existingCheckOut >
-      requestedCheckIn
+    existingCheckIn < requestedEnd &&
+    existingEnd > requestedCheckIn
   );
 
 }
@@ -799,7 +811,7 @@ router.post(
 
 
       if (
-        requestedCheckOut <=
+        requestedCheckOut <
         requestedCheckIn
       ) {
 
@@ -2912,11 +2924,11 @@ router.post(
       }
 
       if (
-        booking.expected_check_out_date <=
+        booking.expected_check_out_date <
         booking.check_in_date
       ) {
         throw new Error(
-          "Booking check-out date must be after check-in date."
+          "Booking check-out date cannot be before check-in date."
         );
       }
 

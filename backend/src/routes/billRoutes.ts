@@ -67,6 +67,13 @@ router.post(
           b.booking_type,
           b.booking_status,
           b.approval_status,
+          sm.full_name AS booking_person_name,
+          (
+            SELECT string_agg(DISTINCT booking_guest.guest_name, ', ' ORDER BY booking_guest.guest_name)
+            FROM booking_guests bg
+            INNER JOIN guests booking_guest ON booking_guest.id = bg.guest_id
+            WHERE bg.booking_id = b.id
+          ) AS booking_guest_names,
           bp.guest_type AS priced_guest_type,
           bp.accommodation_category AS priced_category,
           bp.accommodation_rate AS priced_accommodation_rate,
@@ -94,7 +101,15 @@ router.post(
           a.bed_id,
           a.allotment_status,
 
-          r.room_number,
+          (
+            SELECT string_agg(DISTINCT billing_room.room_number, ', ' ORDER BY billing_room.room_number)
+            FROM allotments booking_allotment
+            INNER JOIN rooms billing_room
+              ON billing_room.id = booking_allotment.room_id
+            INNER JOIN check_ins billing_check_in
+              ON billing_check_in.allotment_id = booking_allotment.id
+            WHERE booking_allotment.booking_id = b.id
+          ) AS room_number,
           r.total_beds,
 
           rc.category_name,
@@ -105,6 +120,9 @@ router.post(
 
         INNER JOIN bookings b
           ON b.id = co.booking_id
+
+        LEFT JOIN booking_service_members sm
+          ON sm.booking_id = b.id
 
         LEFT JOIN booking_pricing bp
           ON bp.booking_id = b.id
@@ -157,6 +175,19 @@ router.post(
       const checkout =
         checkoutResult.rows[0];
 
+      if (checkout.booking_status !== "CHECKED_OUT") {
+        await client.query("ROLLBACK");
+        res.status(409).json({
+          message: "The booking-level final bill can be generated only after all checked-in guests have checked out.",
+        });
+        return;
+      }
+
+      await client.query(
+        "SELECT id FROM bookings WHERE id = $1 FOR UPDATE",
+        [booking_id]
+      );
+
       const existingBillResult =
         await client.query(
           `
@@ -175,11 +206,12 @@ router.post(
 
           FROM bills
 
-          WHERE check_out_id = $1
+          WHERE booking_id = $1
+             OR check_out_id = $2
 
           LIMIT 1
           `,
-          [check_out_id]
+          [booking_id, check_out_id]
         );
 
       if (existingBillResult.rows.length > 0) {
@@ -435,9 +467,92 @@ router.post(
       =====================================================
       */
 
-      const roomCharges =
-        accommodationRate *
-        stayDays;
+      const accommodationUsageResult = await client.query(
+        `
+        WITH unit_stays AS (
+          SELECT
+            CASE
+              WHEN a.bed_id IS NULL THEN 'ROOM:' || a.room_id::text
+              ELSE 'BED:' || a.bed_id::text
+            END AS unit_key,
+            a.room_id,
+            a.bed_id,
+            MIN(ci.check_in_time AT TIME ZONE 'Asia/Kolkata')::date AS check_in_date,
+            MAX(co.check_out_time AT TIME ZONE 'Asia/Kolkata')::date AS check_out_date,
+            MAX(
+              COALESCE(
+                legacy_rate.daily_rate,
+                CASE
+                  WHEN a.bed_id IS NOT NULL
+                       AND UPPER(COALESCE(bg.relationship, 'OTHER')) <> 'SELF'
+                    THEN card.civilian_room_rate
+                  WHEN UPPER(bp.guest_type) = 'ESM'
+                    THEN card.esm_room_rate
+                  WHEN UPPER(bp.guest_type) = 'SERVING'
+                    THEN card.serving_room_rate
+                  WHEN UPPER(bp.guest_type) = 'CIVILIAN'
+                    THEN card.civilian_room_rate
+                END
+              )
+            ) AS daily_rate
+          FROM allotments a
+          INNER JOIN check_ins ci ON ci.allotment_id = a.id
+          INNER JOIN check_outs co ON co.allotment_id = a.id
+          LEFT JOIN booking_pricing bp ON bp.booking_id = a.booking_id
+          LEFT JOIN booking_guests bg
+            ON bg.booking_id = a.booking_id
+           AND bg.guest_id = a.guest_id
+          LEFT JOIN room_rate_cards card ON card.room_id = a.room_id
+          LEFT JOIN booking_legacy_bill_rates legacy_rate
+            ON legacy_rate.booking_id = a.booking_id
+           AND legacy_rate.room_id = a.room_id
+          WHERE a.booking_id = $1
+          GROUP BY 1, a.room_id, a.bed_id
+        )
+        SELECT
+          COUNT(*)::INTEGER AS accommodation_units,
+          COALESCE(SUM(GREATEST(1, check_out_date - check_in_date)), 0)::INTEGER
+            AS accommodation_unit_days,
+          COUNT(*) FILTER (
+            WHERE daily_rate IS NULL OR daily_rate <= 0
+          )::INTEGER AS invalid_rate_units,
+          COALESCE(
+            SUM(GREATEST(1, check_out_date - check_in_date) * daily_rate),
+            0
+          )::NUMERIC AS room_charges
+        FROM unit_stays
+        `,
+        [booking_id]
+      );
+      const accommodationUnits = Number(
+        accommodationUsageResult.rows[0].accommodation_units
+      );
+      const accommodationUnitDays = Number(
+        accommodationUsageResult.rows[0].accommodation_unit_days
+      );
+      const roomCharges = Number(
+        accommodationUsageResult.rows[0].room_charges
+      );
+      const invalidRateUnits = Number(
+        accommodationUsageResult.rows[0].invalid_rate_units
+      );
+      if (
+        !Number.isSafeInteger(accommodationUnits) ||
+        accommodationUnits < 1 ||
+        !Number.isSafeInteger(accommodationUnitDays) ||
+        accommodationUnitDays < 1 ||
+        invalidRateUnits > 0 ||
+        !Number.isFinite(roomCharges) ||
+        roomCharges <= 0
+      ) {
+        throw new Error(
+          invalidRateUnits > 0
+            ? "A checked-in accommodation unit is missing a valid daily rate."
+            : "No checked-in accommodation units were found for this booking."
+        );
+      }
+      const billedAverageRate =
+        roomCharges / accommodationUnitDays;
 
       /*
       =====================================================
@@ -632,6 +747,12 @@ router.post(
           booking_reference:
             checkout.booking_reference,
 
+          booking_person_name:
+            checkout.booking_person_name,
+
+          booking_guest_names:
+            checkout.booking_guest_names,
+
           guest_name:
             checkout.guest_name,
 
@@ -657,8 +778,13 @@ router.post(
             stayDays,
 
           accommodation_rate:
-            accommodationRate,
+            billedAverageRate,
 
+          accommodation_units:
+            accommodationUnits,
+
+          accommodation_unit_days:
+            accommodationUnitDays,
           room_charges:
             roomCharges,
 

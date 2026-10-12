@@ -247,8 +247,6 @@ BEGIN
                 esm_room_rate,
                 serving_room_rate,
                 civilian_room_rate,
-                esm_serving_bed_rate,
-                civilian_bed_rate,
                 updated_by,
                 updated_at
             )
@@ -259,8 +257,6 @@ BEGIN
                 template.esm_room_rate,
                 template.serving_room_rate,
                 template.civilian_room_rate,
-                template.esm_serving_bed_rate,
-                template.civilian_bed_rate,
                 template.updated_by,
                 CURRENT_TIMESTAMP
             FROM public.room_rate_cards template

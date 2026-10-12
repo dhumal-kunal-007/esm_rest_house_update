@@ -48,7 +48,7 @@ const readRequestedDateRange = (
   if (
     !validDate(checkIn) ||
     !validDate(checkOut) ||
-    checkOut <= checkIn
+    checkOut < checkIn
   ) {
     return null;
   }
@@ -2076,7 +2076,11 @@ router.get(
                       FROM check_ins ci
                       WHERE ci.allotment_id = a.id
                         AND ci.check_in_time::date <
-                          $3::date
+                          GREATEST($3::date, $2::date + 1)
+                        AND GREATEST(
+                          bk.expected_check_out_date,
+                          bk.check_in_date + 1
+                        ) > $2::date
                     )
                     OR (
                       NOT EXISTS (
@@ -2090,9 +2094,12 @@ router.get(
                               ci.allotment_id
                           )
                       )
-                      AND bk.check_in_date < $3::date
-                      AND bk.expected_check_out_date >
-                        $2::date
+                      AND bk.check_in_date <
+                        GREATEST($3::date, $2::date + 1)
+                      AND GREATEST(
+                        bk.expected_check_out_date,
+                        bk.check_in_date + 1
+                      ) > $2::date
                     )
                     OR EXISTS (
                       SELECT 1
@@ -2115,10 +2122,12 @@ router.get(
                             'CANCELLED',
                             'REJECTED'
                           )
-                        AND accepted_booking.check_in_date
-                          < $3::date
-                        AND accepted_booking.expected_check_out_date
-                          > $2::date
+                        AND accepted_booking.check_in_date <
+                          GREATEST($3::date, $2::date + 1)
+                        AND GREATEST(
+                          accepted_booking.expected_check_out_date,
+                          accepted_booking.check_in_date + 1
+                        ) > $2::date
                         AND NOT EXISTS (
                           SELECT 1
                           FROM allotments accepted_allotment

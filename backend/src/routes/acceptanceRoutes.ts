@@ -140,13 +140,13 @@ router.post("/", async (req: Request, res: Response) => {
     if (
       !booking.check_in_date ||
       !booking.expected_check_out_date ||
-      booking.expected_check_out_date <= booking.check_in_date
+      booking.expected_check_out_date < booking.check_in_date
     ) {
       await client.query("ROLLBACK");
       return res.status(409).json({
         success: false,
         message:
-          "The booking must have check-out after check-in before accommodation can be accepted.",
+          "The booking must have a check-out date on or after check-in before accommodation can be accepted.",
       });
     }
 
@@ -411,8 +411,12 @@ router.post("/", async (req: Request, res: Response) => {
           AND ba.room_id = $1
           AND ba.bed_id IS NOT NULL
           AND ba.guest_id <> $2
-          AND existing_booking.check_in_date < $4
-          AND existing_booking.expected_check_out_date > $3
+          AND existing_booking.check_in_date <
+            GREATEST($4::DATE, $3::DATE + 1)
+          AND GREATEST(
+            existing_booking.expected_check_out_date,
+            existing_booking.check_in_date + 1
+          ) > $3::DATE
         `,
         [
           roomId,
@@ -587,8 +591,12 @@ router.post("/", async (req: Request, res: Response) => {
         WHERE ba.acceptance_status = 'ACCEPTED'
           AND ba.booking_id <> $1
           AND ba.room_id = $2
-          AND existing_booking.check_in_date < $4
-          AND existing_booking.expected_check_out_date > $3
+          AND existing_booking.check_in_date <
+            GREATEST($4::DATE, $3::DATE + 1)
+          AND GREATEST(
+            existing_booking.expected_check_out_date,
+            existing_booking.check_in_date + 1
+          ) > $3::DATE
           AND (
             $5::uuid IS NULL
             OR ba.bed_id IS NULL
@@ -624,8 +632,12 @@ router.post("/", async (req: Request, res: Response) => {
       WHERE
         a.room_id = $1
         AND a.allotment_status = 'ALLOTTED'
-        AND existing_booking.check_in_date < $3
-        AND existing_booking.expected_check_out_date > $2
+        AND existing_booking.check_in_date <
+          GREATEST($3::DATE, $2::DATE + 1)
+        AND GREATEST(
+          existing_booking.expected_check_out_date,
+          existing_booking.check_in_date + 1
+        ) > $2::DATE
         AND (
           $4::uuid IS NULL
           OR a.bed_id IS NULL

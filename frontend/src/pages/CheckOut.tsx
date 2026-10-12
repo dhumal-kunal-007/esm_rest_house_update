@@ -7,6 +7,7 @@ import CheckoutFeedback, {
 } from "./CheckoutFeedback";
 import RefundMemo, {
   type RefundMemoData,
+  type RefundMemoDraft,
   type RefundMemoGuestType,
 } from "./RefundMemo";
 
@@ -41,6 +42,10 @@ interface EligibleGuest {
   check_in_status:
     | "NOT_CHECKED_IN"
     | "CHECKED_IN";
+  is_early_checkout?: boolean;
+  is_final_checkout_group?: boolean;
+  has_prior_early_checkout?: boolean;
+  room_group_guests?: EligibleGuest[];
 }
 
 interface CheckoutRecord {
@@ -62,6 +67,8 @@ interface BillDetails {
   payment_status: string;
   payment_method: string;
   booking_reference?: string;
+  booking_person_name?: string;
+  booking_guest_names?: string;
   guest_name?: string;
   mobile_number?: string;
   room_number?: string;
@@ -72,6 +79,8 @@ interface BillDetails {
   check_out_time?: string;
   stay_days?: number;
   accommodation_rate?: number;
+  accommodation_units?: number;
+  accommodation_unit_days?: number;
   additional_person_count?: number;
   additional_person_rate?: number;
   additional_person_charges?: number;
@@ -216,6 +225,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
   const [refundMemo, setRefundMemo] =
     useState<RefundMemoRecord | null>(null);
 
+  const [refundMemoDraft, setRefundMemoDraft] =
+    useState<RefundMemoDraft | null>(null);
+
   const [feedbackNotification, setFeedbackNotification] =
     useState<FeedbackNotification | null>(
       null
@@ -235,6 +247,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   const [checkoutFeedbackContext, setCheckoutFeedbackContext] =
     useState<CheckoutFeedbackContext | null>(null);
+
+  const [checkoutFeedbackDraft, setCheckoutFeedbackDraft] =
+    useState<CheckoutFeedbackValues | null>(null);
 
   useEffect(() => {
     if (generatedBill && showBillSection) {
@@ -323,6 +338,26 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   useEffect(() => {
     loadEligibleGuests();
+  }, []);
+
+  const checkoutGroups = guests.reduce<EligibleGuest[]>((groups, guest) => {
+    if (guest.bed_id) {
+      groups.push(guest);
+      return groups;
+    }
+
+    const existingGroup = groups.find(
+      (group) =>
+        !group.bed_id &&
+        group.booking_id === guest.booking_id &&
+        group.room_id === guest.room_id
+    );
+    if (existingGroup) {
+      existingGroup.room_group_guests?.push(guest);
+    } else {
+      groups.push({ ...guest, room_group_guests: [guest] });
+    }
+    return groups;
   }, []);
 
   // ---------------------------------------------------------
@@ -438,6 +473,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setPayment(null);
     setRefund(null);
     setRefundMemo(null);
+    setRefundMemoDraft(null);
     setFeedbackNotification(null);
 
     setRefundAdjustment(0);
@@ -446,6 +482,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setPreCheckoutStep(null);
 
     setCheckoutFeedbackContext(null);
+    setCheckoutFeedbackDraft(null);
 
     try {
       setLoading(true);
@@ -483,10 +520,18 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setSuccess("");
 
     if (type === "PRE_CHECKOUT") {
-      setPreCheckoutStep(
-        "REFUND_CALCULATION"
-      );
+      if (!selectedGuest.is_final_checkout_group) {
+        setPreCheckoutStep("CHECKOUT");
+      } else {
+        setPreCheckoutStep("REFUND_CALCULATION");
+      }
     } else {
+      if (selectedGuest.is_early_checkout || selectedGuest.has_prior_early_checkout) {
+        setError(
+          "This is an early check-out or the booking has an earlier early departure. Use Pre Check-Out."
+        );
+        return;
+      }
       await openFinalCheckoutFeedback();
     }
   };
@@ -805,11 +850,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
      * For Pre Check-Out, don't allow actual
      * checkout before refund memo.
      */
-    if (
-      checkoutType ===
-        "PRE_CHECKOUT" &&
-      !refundMemo
-    ) {
+    const isNonFinalBookingGroup =
+      selectedGuest.is_final_checkout_group === false;
+    if (checkoutType === "PRE_CHECKOUT" && !isNonFinalBookingGroup && !refundMemo) {
       setError(
         "Refund memo must be generated before Pre Check-Out."
       );
@@ -821,15 +864,28 @@ const CheckOut: React.FC<CheckOutProps> = ({
       setError("");
       setSuccess("");
 
+      const isRoomGroup = !selectedGuest.bed_id;
       const response = await apiFetch(
-        "http://localhost:5000/api/check-outs",
+        isRoomGroup
+          ? "http://localhost:5000/api/check-outs/room"
+          : "http://localhost:5000/api/check-outs",
         {
           method: "POST",
           headers: {
             "Content-Type":
               "application/json",
           },
-          body: JSON.stringify({
+          body: JSON.stringify(isRoomGroup ? {
+            booking_id: selectedGuest.booking_id,
+            room_id: selectedGuest.room_id,
+            checked_out_by: userId,
+            checkout_type: checkoutType,
+            remarks:
+              remarks.trim() ||
+              (checkoutType === "PRE_CHECKOUT"
+                ? "Pre Check-Out"
+                : "Scheduled Check-Out"),
+          } : {
             booking_id:
               selectedGuest.booking_id,
 
@@ -866,6 +922,23 @@ const CheckOut: React.FC<CheckOutProps> = ({
         throw new Error(
           "Check-Out completed but checkout record was not returned."
         );
+      }
+
+      if (data.booking_complete !== true) {
+        setSuccess(
+          "Room check-out completed. The final bill and any booking refund will be processed after the remaining room/bed groups check out."
+        );
+        setSelectedGuest(null);
+        setCheckoutType(null);
+        setPreCheckoutStep(null);
+        setCheckoutFeedbackContext(null);
+        setCheckoutFeedbackDraft(null);
+        setPayment(null);
+        setRefund(null);
+        setRefundMemo(null);
+        setRefundMemoDraft(null);
+        await loadEligibleGuests();
+        return;
       }
 
       setCompletedCheckout(
@@ -1188,6 +1261,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
     setRefundMemo(null);
 
+    setRefundMemoDraft(null);
+
     setFeedbackNotification(
       null
     );
@@ -1201,6 +1276,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setPreCheckoutStep(null);
 
     setCheckoutFeedbackContext(null);
+
+    setCheckoutFeedbackDraft(null);
 
     setError("");
 
@@ -1436,7 +1513,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
                 </thead>
 
                 <tbody>
-                  {guests.map(
+                  {checkoutGroups.map(
                     (
                       guest
                     ) => (
@@ -1474,10 +1551,14 @@ const CheckOut: React.FC<CheckOutProps> = ({
                                 700,
                             }}
                           >
-                            {
-                              guest.guest_name
-                            }
+                            {guest.booking_person_name || guest.guest_name}
                           </div>
+
+                          {guest.room_group_guests && (
+                            <div style={{ fontSize: 12, color: "#475569", marginTop: 4 }}>
+                              {guest.room_group_guests.map((roomGuest) => roomGuest.guest_name).join(", ")}
+                            </div>
+                          )}
 
                           {guest.mobile_number && (
                             <div
@@ -1604,7 +1685,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
                                 "pointer",
                             }}
                           >
-                            SELECT
+                            {guest.room_group_guests ? "SELECT ROOM GROUP" : "SELECT"}
                           </button>
                         </td>
                       </tr>
@@ -1653,7 +1734,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       1,
                   }}
                 >
-                  SELECTED GUEST
+                  {selectedGuest.room_group_guests ? "SELECTED ROOM GROUP" : "SELECTED GUEST"}
                 </div>
 
                 <h2
@@ -1664,10 +1745,14 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       27,
                   }}
                 >
-                  {
-                    selectedGuest.guest_name
-                  }
+                  {selectedGuest.booking_person_name || selectedGuest.guest_name}
                 </h2>
+
+                {selectedGuest.room_group_guests && (
+                  <div style={{ color: "#475569", marginBottom: 8 }}>
+                    Guests in room: {selectedGuest.room_group_guests.map((guest) => guest.guest_name).join(", ")}
+                  </div>
+                )}
 
                 <div
                   style={{
@@ -1819,6 +1904,11 @@ const CheckOut: React.FC<CheckOutProps> = ({
                   }}
                 >
                   <button
+                    disabled={Boolean(
+                      selectedGuest.is_early_checkout ||
+                      (selectedGuest.is_final_checkout_group &&
+                        selectedGuest.has_prior_early_checkout)
+                    )}
                     onClick={() =>
                       handleCheckoutType(
                         "SCHEDULED"
@@ -1839,7 +1929,17 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       background:
                         "#fff",
                       cursor:
-                        "pointer",
+                        selectedGuest.is_early_checkout ||
+                        (selectedGuest.is_final_checkout_group &&
+                          selectedGuest.has_prior_early_checkout)
+                          ? "not-allowed"
+                          : "pointer",
+                      opacity:
+                        selectedGuest.is_early_checkout ||
+                        (selectedGuest.is_final_checkout_group &&
+                          selectedGuest.has_prior_early_checkout)
+                          ? 0.5
+                          : 1,
                     }}
                   >
                     <div
@@ -1926,11 +2026,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
                           1.6,
                       }}
                     >
-                      Refund
-                      calculation
-                      and refund
-                      memo are
-                      required.
+                      {selectedGuest.is_final_checkout_group
+                        ? "Refund calculation and refund memo are required for the final booking check-out."
+                        : "This room/bed group can be released now. Refund and final bill are handled once, after the final group checks out."}
                     </p>
                   </button>
                 </div>
@@ -2218,9 +2316,11 @@ const CheckOut: React.FC<CheckOutProps> = ({
                   refundReason.trim() ||
                   "Pre Check-Out Refund Memo"
                 }
-                onBack={() =>
-                  setPreCheckoutStep("REFUND_CALCULATION")
-                }
+                draft={refundMemoDraft}
+                onBack={(draft) => {
+                  setRefundMemoDraft(draft);
+                  setPreCheckoutStep("REFUND_CALCULATION");
+                }}
                 onContinue={(memo) =>
                   void createRefundMemo(memo)
                 }
@@ -2237,6 +2337,16 @@ const CheckOut: React.FC<CheckOutProps> = ({
               <CheckoutFeedback
                 context={checkoutFeedbackContext}
                 loading={loading}
+                draft={checkoutFeedbackDraft}
+                onDraftChange={setCheckoutFeedbackDraft}
+                onBack={
+                  checkoutType === "SCHEDULED"
+                    ? () => {
+                        setPreCheckoutStep(null);
+                        setCheckoutType(null);
+                      }
+                    : undefined
+                }
                 onSubmit={(values) => void saveCheckoutFeedback(values)}
                 onSkip={() => void saveCheckoutFeedback()}
               />
@@ -2248,7 +2358,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
           {checkoutType &&
             preCheckoutStep === "CHECKOUT" &&
-            (checkoutType !== "PRE_CHECKOUT" || refundMemo) &&
+            (checkoutType !== "PRE_CHECKOUT" ||
+              refundMemo ||
+              selectedGuest.is_final_checkout_group === false) &&
             !completedCheckout && (
               <div
                 style={{
@@ -2268,6 +2380,12 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     ? "Confirm Pre Check-Out"
                     : "Confirm Scheduled Check-Out"}
                 </h2>
+
+                {selectedGuest.is_final_checkout_group === false && (
+                  <p style={{ color: "#64748b" }}>
+                    This action checks out the selected room/bed group only. The booking-level refund and final bill will be handled after the remaining groups check out.
+                  </p>
+                )}
 
                 {refundMemo && (
                 <div
@@ -2745,8 +2863,11 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     <div>
                       <h2>GUEST DETAILS</h2>
                       <p>
-                        <strong>{generatedBill.guest_name || selectedGuest?.guest_name || "—"}</strong>
+                        <strong>{generatedBill.booking_person_name || generatedBill.guest_name || selectedGuest?.booking_person_name || selectedGuest?.guest_name || "—"}</strong>
                       </p>
+                      {generatedBill.booking_guest_names && (
+                        <p>Guests: {generatedBill.booking_guest_names}</p>
+                      )}
                       <p>Mobile: {generatedBill.mobile_number || selectedGuest?.mobile_number || "—"}</p>
                       <p>Booking Ref: {generatedBill.booking_reference || selectedGuest?.booking_reference || "—"}</p>
                     </div>
@@ -2755,6 +2876,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       <p>
                         Room: <strong>{generatedBill.room_number || selectedGuest?.room_number || "—"}</strong>
                         {generatedBill.bed_number
+                          && (generatedBill.accommodation_units ?? 1) === 1
                           ? ` / Bed ${generatedBill.bed_number}`
                           : ""}
                       </p>
@@ -2779,8 +2901,10 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       <tr>
                         <td>Accommodation — {generatedBill.accommodation_type || generatedBill.category_name || "Room"}</td>
                         <td>
-                          {generatedBill.stay_days ?? "—"} day(s) × ₹
-                          {Number(generatedBill.accommodation_rate || 0).toFixed(2)}
+                          {generatedBill.accommodation_unit_days ??
+                            (generatedBill.accommodation_units ?? 1) *
+                              (generatedBill.stay_days ?? 0)} unit-day(s), charged
+                          at each unit's applicable daily rate
                         </td>
                         <td>{Number(generatedBill.room_charges).toFixed(2)}</td>
                       </tr>

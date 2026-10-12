@@ -62,6 +62,15 @@ export interface RefundMemoData {
   };
 }
 
+export interface RefundMemoDraft {
+  memoType: RefundMemoType;
+  memoNumber: string;
+  memoDate: string;
+  remarks: string;
+  bankDetails: RefundMemoData["bankDetails"];
+  confirmed: boolean;
+}
+
 interface RefundMemoProps {
   officerName: string;
 
@@ -93,7 +102,8 @@ interface RefundMemoProps {
   continueLabel?: string;
   nextStageDescription?: string;
 
-  onBack: () => void;
+  draft?: RefundMemoDraft | null;
+  onBack: (draft: RefundMemoDraft) => void;
 
   onContinue: (
     data: RefundMemoData
@@ -175,6 +185,7 @@ function RefundMemo({
   loading = false,
   continueLabel,
   nextStageDescription,
+  draft,
 
   onBack,
   onContinue,
@@ -196,40 +207,61 @@ function RefundMemo({
     setMemoType,
   ] =
     useState<RefundMemoType>(
-      "CASH_MEMO"
+      draft?.memoType ?? "CASH_MEMO"
     );
 
   const [
     memoNumber,
-  ] = useState(() => createMemoNumber(bookingId));
+  ] = useState(() => draft?.memoNumber ?? createMemoNumber(bookingId));
 
   const [
     memoDate,
     setMemoDate,
   ] =
     useState(
-      getTodayDate()
+      draft?.memoDate ?? getTodayDate()
     );
 
   const [
     remarks,
     setRemarks,
   ] = useState(
-    calculationRemarks ||
-      ""
+    draft?.remarks ??
+      (calculationRemarks || "")
   );
-  const [bankAccountHolder, setBankAccountHolder] = useState(bookingPersonName);
-  const [bankName, setBankName] = useState("");
-  const [bankBranch, setBankBranch] = useState("");
-  const [bankAccountNumber, setBankAccountNumber] = useState("");
-  const [bankIfsc, setBankIfsc] = useState("");
+  const [bankAccountHolder, setBankAccountHolder] = useState(
+    draft?.bankDetails.accountHolder ?? bookingPersonName
+  );
+  const [bankName, setBankName] = useState(draft?.bankDetails.bankName ?? "");
+  const [bankBranch, setBankBranch] = useState(draft?.bankDetails.branch ?? "");
+  const [bankAccountNumber, setBankAccountNumber] = useState(
+    draft?.bankDetails.accountNumber ?? ""
+  );
+  const [bankIfsc, setBankIfsc] = useState(draft?.bankDetails.ifsc ?? "");
 
   const [
     confirmed,
     setConfirmed,
-  ] = useState(false);
+  ] = useState(draft?.confirmed ?? false);
   const [savingPdf, setSavingPdf] = useState(false);
   const [pdfSaveError, setPdfSaveError] = useState("");
+
+  const handleBack = () => {
+    onBack({
+      memoType,
+      memoNumber,
+      memoDate,
+      remarks,
+      bankDetails: {
+        accountHolder: bankAccountHolder,
+        bankName,
+        branch: bankBranch,
+        ifsc: bankIfsc,
+        accountNumber: bankAccountNumber,
+      },
+      confirmed,
+    });
+  };
 
   const handleSavePdf = async () => {
     setSavingPdf(true);
@@ -579,9 +611,7 @@ function RefundMemo({
           <button
             type="button"
             className="availability-back-button"
-            onClick={
-              onBack
-            }
+            onClick={handleBack}
           >
             ←{" "}
             {tr(
@@ -2041,9 +2071,7 @@ function RefundMemo({
         <button
           type="button"
           className="secondary-action"
-          onClick={
-            onBack
-          }
+          onClick={handleBack}
         >
           {tr(
             "BACK TO REFUND CALCULATION",

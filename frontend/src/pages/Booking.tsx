@@ -34,8 +34,8 @@ const relationshipProofOptions = [
   "ECHS CARD",
 ];
 
-const STANDARD_CHECK_IN_TIME = "14:00";
-const STANDARD_CHECK_OUT_TIME = "12:00";
+const STANDARD_CHECK_IN_TIME = "13:00";
+const STANDARD_CHECK_OUT_TIME = "13:00";
 
 /* =================================
    TYPES
@@ -189,31 +189,6 @@ const getDatePart = (
     0,
     10
   );
-};
-
-const getNextDate = (
-  value: string
-): string => {
-  if (!value) {
-    return "";
-  }
-
-  const nextDate = new Date(
-    `${value}T12:00:00`
-  );
-  nextDate.setDate(
-    nextDate.getDate() + 1
-  );
-
-  const year = nextDate.getFullYear();
-  const month = String(
-    nextDate.getMonth() + 1
-  ).padStart(2, "0");
-  const day = String(
-    nextDate.getDate()
-  ).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
 };
 
 /* =================================
@@ -747,8 +722,8 @@ function Booking({
 
     if (
       checkOut &&
-      checkOut <=
-      selectedValue
+      getDatePart(checkOut) <
+      getDatePart(selectedValue)
     ) {
       setCheckOut("");
       setCheckOutError("");
@@ -772,14 +747,14 @@ function Booking({
     if (
       selectedValue &&
       checkIn &&
-      getDatePart(selectedValue) <=
+      getDatePart(selectedValue) <
       getDatePart(checkIn)
     ) {
       setCheckOut(selectedValue);
       setCheckOutError(
         tr(
-          "Check-out must be after check-in.",
-          "चेक-आउटची तारीख व वेळ चेक-इननंतरची असली पाहिजे."
+          "Check-out date cannot be before check-in date.",
+          "चेक-आउटची तारीख चेक-इनच्या तारखेच्या आधीची असू शकत नाही."
         )
       );
       return;
@@ -913,14 +888,11 @@ function Booking({
       return false;
     }
 
-    if (
-      new Date(checkOut) <=
-      new Date(checkIn)
-    ) {
+    if (selectedCheckOutDate < selectedCheckInDate) {
       showValidationMessage(
         tr(
-          "Check-out must be after check-in.",
-          "चेक-आउटची तारीख व वेळ चेक-इननंतरची असली पाहिजे."
+          "Check-out date cannot be before check-in date.",
+          "चेक-आउटची तारीख चेक-इनच्या तारखेच्या आधीची असू शकत नाही."
         )
       );
 
@@ -2497,7 +2469,7 @@ function Booking({
               type="date"
               min={
                 checkIn
-                  ? getNextDate(getDatePart(checkIn))
+                  ? getDatePart(checkIn)
                   : undefined
               }
               value={
@@ -2556,8 +2528,8 @@ function Booking({
           role="note"
         >
           {tr(
-            `Standard check-out is ${STANDARD_CHECK_OUT_TIME} (12:00 PM) and check-in starts at ${STANDARD_CHECK_IN_TIME} (2:00 PM). Same-day room reuse is allowed after the previous guest checks out and housekeeping clears the accommodation.`,
-            `नियमित चेक-आउट दुपारी १२:०० वाजता आणि चेक-इन दुपारी २:०० नंतर आहे. मागील अतिथीने चेक-आउट केल्यानंतर आणि हाऊसकीपिंगने खोली स्वच्छ केल्यानंतर ती त्याच दिवशी पुन्हा देता येईल.`
+            `Standard check-in and check-out time is 1:00 PM on the selected dates. Same-day room reuse is allowed after the previous guest checks out and housekeeping clears the accommodation.`,
+            `निवडलेल्या तारखांना नियमित चेक-इन आणि चेक-आउटची वेळ दुपारी १:०० आहे. मागील अतिथीने चेक-आउट केल्यानंतर आणि हाऊसकीपिंगने खोली स्वच्छ केल्यानंतर ती त्याच दिवशी पुन्हा देता येईल.`
           )}
         </p>
 

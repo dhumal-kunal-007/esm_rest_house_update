@@ -36,6 +36,9 @@ export interface CheckoutFeedbackValues {
 interface CheckoutFeedbackProps {
   context: CheckoutFeedbackContext;
   loading: boolean;
+  draft?: CheckoutFeedbackValues | null;
+  onDraftChange: (values: CheckoutFeedbackValues) => void;
+  onBack?: () => void;
   onSubmit: (values: CheckoutFeedbackValues) => void;
   onSkip: () => void;
 }
@@ -50,6 +53,9 @@ const getToday = (): string =>
 function CheckoutFeedback({
   context,
   loading,
+  draft,
+  onDraftChange,
+  onBack,
   onSubmit,
   onSkip,
 }: CheckoutFeedbackProps) {
@@ -59,12 +65,14 @@ function CheckoutFeedback({
     isMarathi ? marathi : english;
 
   const [ratings, setRatings] = useState<CheckoutFeedbackValues>({
-    staff_rating: context.feedback?.staff_rating ?? 0,
-    housekeeping_rating: context.feedback?.housekeeping_rating ?? 0,
-    facilities_rating: context.feedback?.facilities_rating ?? 0,
-    food_rating: context.feedback?.food_rating ?? 0,
-    overall_rating: context.feedback?.overall_rating ?? 0,
-    comments: context.feedback?.comments ?? "",
+    staff_rating: draft?.staff_rating ?? context.feedback?.staff_rating ?? 0,
+    housekeeping_rating:
+      draft?.housekeeping_rating ?? context.feedback?.housekeeping_rating ?? 0,
+    facilities_rating:
+      draft?.facilities_rating ?? context.feedback?.facilities_rating ?? 0,
+    food_rating: draft?.food_rating ?? context.feedback?.food_rating ?? 0,
+    overall_rating: draft?.overall_rating ?? context.feedback?.overall_rating ?? 0,
+    comments: draft?.comments ?? context.feedback?.comments ?? "",
   });
   const [validationError, setValidationError] = useState("");
 
@@ -84,7 +92,9 @@ function CheckoutFeedback({
     key: keyof Omit<CheckoutFeedbackValues, "comments">,
     value: number
   ) => {
-    setRatings((current) => ({ ...current, [key]: value }));
+    const next = { ...ratings, [key]: value };
+    setRatings(next);
+    onDraftChange(next);
     setValidationError("");
   };
 
@@ -167,12 +177,14 @@ function CheckoutFeedback({
           value={ratings.comments}
           maxLength={2000}
           rows={4}
-          onChange={(event) =>
-            setRatings((current) => ({
-              ...current,
+          onChange={(event) => {
+            const next = {
+              ...ratings,
               comments: event.target.value,
-            }))
-          }
+            };
+            setRatings(next);
+            onDraftChange(next);
+          }}
           placeholder={tr(
             "Share a comment or suggestion",
             "आपला अभिप्राय किंवा सूचना लिहा"
@@ -189,6 +201,16 @@ function CheckoutFeedback({
       )}
 
       <div className="checkout-feedback-actions">
+        {onBack && (
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={onBack}
+            disabled={loading}
+          >
+            {tr("BACK", "मागे")}
+          </button>
+        )}
         <button
           type="button"
           className="secondary-action checkout-feedback-print-button"

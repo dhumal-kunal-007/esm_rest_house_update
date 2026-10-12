@@ -96,15 +96,16 @@ export const calculateBookingPricing = (input: {
 }): BookingPricingResult => {
   const checkIn = toUtcDate(input.checkInDate);
   const checkOut = toUtcDate(input.checkOutDate);
-  const accommodationDays = Math.ceil(
+  const stayDays = Math.ceil(
     (checkOut - checkIn) / millisecondsPerDay
   );
 
-  if (accommodationDays <= 0) {
+  if (stayDays < 0) {
     throw new BookingPricingInputError(
-      "Check-out must be after check-in to calculate a rate."
+      "Check-out cannot be before check-in to calculate a rate."
     );
   }
+  const accommodationDays = Math.max(1, stayDays);
 
   const units = input.roomCount;
 

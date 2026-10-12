@@ -27,6 +27,7 @@ interface AllottedGuest {
   allotment_id: string;
   booking_id: string;
   booking_reference: string;
+  booking_person_name?: string | null;
   guest_id: string;
   guest_name: string;
   mobile_number: string | null;
@@ -42,6 +43,7 @@ interface AllottedGuest {
   check_in_status:
     | "NOT_CHECKED_IN"
     | "CHECKED_IN";
+  room_group_guests?: AllottedGuest[];
 }
 
 /* =========================================
@@ -104,7 +106,7 @@ function CheckIn({
     );
 
   const [manualCheckInTime, setManualCheckInTime] =
-    useState("12:00");
+    useState("13:00");
 
   const [manualAmount, setManualAmount] =
     useState("");
@@ -172,7 +174,7 @@ function CheckIn({
 
       const normalizedGuests: AllottedGuest[] =
         apiGuests.map(
-          (guest: any) => ({
+          (guest: Record<string, unknown>) => ({
             allotment_id:
               String(
                 guest.allotment_id ?? ""
@@ -187,6 +189,11 @@ function CheckIn({
               String(
                 guest.booking_reference ?? ""
               ),
+
+            booking_person_name:
+              guest.booking_person_name
+                ? String(guest.booking_person_name)
+                : null,
 
             guest_id:
               String(
@@ -344,6 +351,9 @@ function CheckIn({
 
     const guest =
       selectedGuest;
+    const guestNames = guest.room_group_guests?.map(
+      (roomGuest) => roomGuest.guest_name
+    );
 
     setProcessingId(
       guest.allotment_id
@@ -352,8 +362,11 @@ function CheckIn({
     setError("");
 
     try {
+      const isRoomGroup = Boolean(guest.room_group_guests?.length);
       const response = await apiFetch(
-        "http://localhost:5000/api/check-ins",
+        isRoomGroup
+          ? "http://localhost:5000/api/check-ins/room"
+          : "http://localhost:5000/api/check-ins",
         {
           method: "POST",
 
@@ -364,7 +377,11 @@ function CheckIn({
               "application/json",
           },
 
-          body: JSON.stringify({
+          body: JSON.stringify(isRoomGroup ? {
+            booking_id: guest.booking_id,
+            room_id: guest.room_id,
+            checked_in_by: userId,
+          } : {
             allotment_id:
               guest.allotment_id,
 
@@ -421,8 +438,12 @@ function CheckIn({
           "चेक-इन पूर्ण झाले"
         ),
 
-        message:
-          guest.bed_number !== null
+        message: isRoomGroup
+          ? tr(
+              `Room ${guest.room_number} check-in completed for ${guestNames?.length ?? 0} guest(s): ${guestNames?.join(", ")}.`,
+              `खोली ${guest.room_number} मधील ${guestNames?.length ?? 0} अतिथींचा चेक-इन पूर्ण झाला: ${guestNames?.join(", ")}.`
+            )
+          : guest.bed_number !== null
             ? tr(
                 `Check-in completed successfully for ${guest.guest_name}.
 
@@ -495,15 +516,27 @@ Accommodation: Full Room`,
     setManualCheckInLoading(true);
 
     try {
+      const isRoomGroup = Boolean(manualCheckInGuest.room_group_guests?.length);
       const response = await apiFetch(
-        "http://localhost:5000/api/check-ins/manual",
+        isRoomGroup
+          ? "http://localhost:5000/api/check-ins/manual-room"
+          : "http://localhost:5000/api/check-ins/manual",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({
+          body: JSON.stringify(isRoomGroup ? {
+            booking_id: manualCheckInGuest.booking_id,
+            room_id: manualCheckInGuest.room_id,
+            checked_in_by: userId,
+            actual_check_in_date: manualCheckInDate,
+            actual_check_in_time: manualCheckInTime,
+            amount: manualAmount.trim() ? Number(manualAmount) : null,
+            payment_method: "CASH",
+            remarks: manualRemarks.trim() || "Manual pre-checkin entry created by authorized staff.",
+          } : {
             allotment_id: manualCheckInGuest.allotment_id,
             booking_id: manualCheckInGuest.booking_id,
             guest_id: manualCheckInGuest.guest_id,
@@ -540,7 +573,7 @@ Accommodation: Full Room`,
 
       setManualCheckInGuest(null);
       setManualCheckInDate(new Date().toISOString().slice(0, 10));
-      setManualCheckInTime("12:00");
+      setManualCheckInTime("13:00");
       setManualAmount("");
       setManualRemarks("");
 
@@ -584,14 +617,38 @@ Accommodation: Full Room`,
       .trim()
       .toLowerCase();
 
+  const groupedRoomGuests = new Map<string, AllottedGuest>();
+  const checkInEntries = guests.reduce<AllottedGuest[]>((entries, guest) => {
+    if (guest.bed_id !== null) {
+      entries.push(guest);
+      return entries;
+    }
+    const groupKey = `${guest.booking_id}:${guest.room_id}`;
+    const existingGroup = groupedRoomGuests.get(groupKey);
+    if (existingGroup) {
+      existingGroup.room_group_guests?.push(guest);
+    } else {
+      const group = { ...guest, room_group_guests: [guest] };
+      groupedRoomGuests.set(groupKey, group);
+      entries.push(group);
+    }
+    return entries;
+  }, []);
+
   const filteredGuests =
-    guests.filter(
+    checkInEntries.filter(
       (guest) => {
         if (!searchValue) {
           return true;
         }
 
         return (
+          (guest.room_group_guests?.some((roomGuest) =>
+            roomGuest.guest_name.toLowerCase().includes(searchValue)
+          ) ?? guest.guest_name.toLowerCase().includes(searchValue)) ||
+          (guest.booking_person_name || "")
+            .toLowerCase()
+            .includes(searchValue) ||
           guest.guest_name
             .toLowerCase()
             .includes(searchValue) ||
@@ -1564,7 +1621,7 @@ Accommodation: Full Room`,
 
                 setManualCheckInGuest(guestToPreCheckIn);
                 setManualCheckInDate(new Date().toISOString().slice(0, 10));
-                setManualCheckInTime("12:00");
+                setManualCheckInTime("13:00");
                 setManualAmount("");
                 setManualRemarks("");
               }}
@@ -1684,10 +1741,7 @@ Accommodation: Full Room`,
                     </th>
 
                     <th>
-                      {tr(
-                        "Guest",
-                        "अतिथी"
-                      )}
+                      {tr("Guest", "अतिथी")}
                     </th>
 
                     <th>
@@ -1763,10 +1817,15 @@ Accommodation: Full Room`,
 
                         <td>
                           <span className="guest-name">
-                            {
-                              guest.guest_name
-                            }
+                            {guest.room_group_guests
+                              ? guest.booking_person_name || guest.guest_name
+                              : guest.guest_name}
                           </span>
+                          {guest.room_group_guests && (
+                            <small style={{ display: "block", marginTop: 4 }}>
+                              {guest.room_group_guests.map((roomGuest) => roomGuest.guest_name).join(", ")}
+                            </small>
+                          )}
                         </td>
 
                         <td>
@@ -1880,8 +1939,12 @@ Accommodation: Full Room`,
                                 }
                               >
                                 {tr(
-                                  guest.check_in_available ? "Check-In" : "Check-In Scheduled",
-                                  guest.check_in_available ? "चेक-इन" : "चेक-इनची तारीख बाकी"
+                                  guest.room_group_guests
+                                    ? `${guest.check_in_available ? "Check-In Room" : "Room Check-In Scheduled"} (${guest.room_group_guests.length})`
+                                    : guest.check_in_available ? "Check-In" : "Check-In Scheduled",
+                                  guest.room_group_guests
+                                    ? `${guest.check_in_available ? "खोली चेक-इन" : "खोली चेक-इनची तारीख बाकी"} (${guest.room_group_guests.length})`
+                                    : guest.check_in_available ? "चेक-इन" : "चेक-इनची तारीख बाकी"
                                 )}
                               </button>
 
@@ -1892,7 +1955,9 @@ Accommodation: Full Room`,
                                   style={{ height: 34, padding: "0 12px" }}
                                   onClick={() => setManualCheckInGuest(guest)}
                                 >
-                                  {tr("Pre-Checkin", "प्री-चेक-इन")}
+                                  {guest.room_group_guests
+                                    ? tr("Pre-Checkin Room", "खोलीचे प्री-चेक-इन")
+                                    : tr("Pre-Checkin", "प्री-चेक-इन")}
                                 </button>
                               )}
                             </div>
@@ -1954,8 +2019,8 @@ Accommodation: Full Room`,
 
                 <h2>
                   {tr(
-                    "Confirm Guest Check-In",
-                    "अतिथी चेक-इनची पुष्टी करा"
+                    selectedGuest.room_group_guests ? "Confirm Room Check-In" : "Confirm Guest Check-In",
+                    selectedGuest.room_group_guests ? "खोली चेक-इनची पुष्टी करा" : "अतिथी चेक-इनची पुष्टी करा"
                   )}
                 </h2>
 
@@ -1996,9 +2061,9 @@ Accommodation: Full Room`,
                   </span>
 
                   <span className="checkin-detail-value">
-                    {
-                      selectedGuest.guest_name
-                    }
+                  {selectedGuest.room_group_guests
+                    ? selectedGuest.room_group_guests.map((guest) => guest.guest_name).join(", ")
+                    : selectedGuest.guest_name}
                   </span>
                 </div>
 
@@ -2228,7 +2293,11 @@ Accommodation: Full Room`,
               <div className="checkin-details">
                 <div className="checkin-detail">
                   <span className="checkin-detail-label">{tr("Guest", "अतिथी")}</span>
-                  <span className="checkin-detail-value">{manualCheckInGuest.guest_name}</span>
+                  <span className="checkin-detail-value">
+                    {manualCheckInGuest.room_group_guests
+                      ? manualCheckInGuest.room_group_guests.map((guest) => guest.guest_name).join(", ")
+                      : manualCheckInGuest.guest_name}
+                  </span>
                 </div>
 
                 <div className="checkin-detail">
@@ -2242,7 +2311,7 @@ Accommodation: Full Room`,
                 </div>
 
                 <div className="checkin-detail">
-                  <span className="checkin-detail-label">{tr("Bed", "बेड")}</span>
+                  <span className="checkin-detail-label">{tr("Bed / Accommodation", "बेड / निवास")}</span>
                   <span className="checkin-detail-value">
                     {manualCheckInGuest.bed_number !== null ? `Bed ${manualCheckInGuest.bed_number}` : tr("Full Room", "पूर्ण खोली")}
                   </span>

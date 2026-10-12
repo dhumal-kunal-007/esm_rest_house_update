@@ -97,8 +97,12 @@ router.get(
             '[]'::json
           ) AS guests,
           (
-            SELECT COUNT(*)::INTEGER
+            SELECT COUNT(DISTINCT CASE
+              WHEN a.bed_id IS NULL THEN a.room_id::text
+              ELSE a.id::text
+            END)::INTEGER
             FROM check_ins ci
+            INNER JOIN allotments a ON a.id = ci.allotment_id
             LEFT JOIN check_outs co ON co.allotment_id = ci.allotment_id
             WHERE ci.booking_id = b.id AND co.id IS NULL
           ) AS remaining_checked_in_guests
@@ -203,8 +207,12 @@ router.post(
         SELECT
           b.id,
           (
-            SELECT COUNT(*)::INTEGER
+            SELECT COUNT(DISTINCT CASE
+              WHEN a.bed_id IS NULL THEN a.room_id::text
+              ELSE a.id::text
+            END)::INTEGER
             FROM check_ins ci
+            INNER JOIN allotments a ON a.id = ci.allotment_id
             LEFT JOIN check_outs co ON co.allotment_id = ci.allotment_id
             WHERE ci.booking_id = b.id AND co.id IS NULL
           ) AS remaining_checked_in_guests

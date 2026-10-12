@@ -1,6 +1,6 @@
 export function resolveActualCheckInTimestamp(
   actualCheckInDate: string,
-  actualCheckInTime = "12:00"
+  actualCheckInTime = "13:00"
 ): string {
   if (!actualCheckInDate || typeof actualCheckInDate !== "string") {
     throw new Error("Actual check-in date is required.");
@@ -12,7 +12,7 @@ export function resolveActualCheckInTimestamp(
     throw new Error("Invalid check-in date. Use YYYY-MM-DD.");
   }
 
-  const trimmedTime = (actualCheckInTime ?? "12:00").trim() || "12:00";
+  const trimmedTime = (actualCheckInTime ?? "13:00").trim() || "13:00";
 
   if (!/^\d{1,2}:\d{2}$/.test(trimmedTime)) {
     throw new Error("Invalid check-in time. Use HH:MM.");
