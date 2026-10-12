@@ -143,12 +143,15 @@ type CheckoutType =
   | "PRE_CHECKOUT";
 
 type PreCheckoutStep =
+  | "REFUND_CHOICE"
   | "REFUND_CALCULATION"
   | "REFUND_MEMO"
   | "FEEDBACK"
   | "CHECKOUT"
   | "WHATSAPP"
   | null;
+
+type RefundChoice = "YES" | "NO" | null;
 
 const CheckOut: React.FC<CheckOutProps> = ({
   userId,
@@ -244,6 +247,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   const [preCheckoutStep, setPreCheckoutStep] =
     useState<PreCheckoutStep>(null);
+
+  const [preCheckoutRefundChoice, setPreCheckoutRefundChoice] =
+    useState<RefundChoice>(null);
 
   const [checkoutFeedbackContext, setCheckoutFeedbackContext] =
     useState<CheckoutFeedbackContext | null>(null);
@@ -480,6 +486,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setRefundReason("");
     setRefundRemarks("");
     setPreCheckoutStep(null);
+    setPreCheckoutRefundChoice(null);
 
     setCheckoutFeedbackContext(null);
     setCheckoutFeedbackDraft(null);
@@ -523,7 +530,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
       if (!selectedGuest.is_final_checkout_group) {
         setPreCheckoutStep("CHECKOUT");
       } else {
-        setPreCheckoutStep("REFUND_CALCULATION");
+        setPreCheckoutRefundChoice(null);
+        setPreCheckoutStep("REFUND_CHOICE");
       }
     } else {
       if (selectedGuest.is_early_checkout || selectedGuest.has_prior_early_checkout) {
@@ -846,17 +854,20 @@ const CheckOut: React.FC<CheckOutProps> = ({
       return;
     }
 
-    /*
-     * For Pre Check-Out, don't allow actual
-     * checkout before refund memo.
-     */
+    // Final-group early check-out needs a refund decision; YES requires a memo.
     const isNonFinalBookingGroup =
       selectedGuest.is_final_checkout_group === false;
     if (checkoutType === "PRE_CHECKOUT" && !isNonFinalBookingGroup && !refundMemo) {
-      setError(
-        "Refund memo must be generated before Pre Check-Out."
-      );
-      return;
+      if (preCheckoutRefundChoice === "YES") {
+        setError(
+          "Refund memo must be generated before Pre Check-Out."
+        );
+        return;
+      }
+      if (preCheckoutRefundChoice !== "NO") {
+        setError("Please choose whether to process a refund.");
+        return;
+      }
     }
 
     try {
@@ -880,6 +891,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
             room_id: selectedGuest.room_id,
             checked_out_by: userId,
             checkout_type: checkoutType,
+            skip_refund:
+              checkoutType === "PRE_CHECKOUT" &&
+              preCheckoutRefundChoice === "NO",
             remarks:
               remarks.trim() ||
               (checkoutType === "PRE_CHECKOUT"
@@ -901,6 +915,10 @@ const CheckOut: React.FC<CheckOutProps> = ({
             checkout_type:
               checkoutType,
 
+            skip_refund:
+              checkoutType === "PRE_CHECKOUT" &&
+              preCheckoutRefundChoice === "NO",
+
             remarks:
               remarks.trim() ||
               (checkoutType ===
@@ -915,12 +933,22 @@ const CheckOut: React.FC<CheckOutProps> = ({
         response
       );
 
+      const checkoutRecords: CheckoutRecord[] =
+        Array.isArray(data.checkouts)
+          ? data.checkouts
+          : [];
       const checkout =
-        data.checkout;
+        checkoutRecords.find(
+          (record) =>
+            record.guest_id === selectedGuest.guest_id
+        ) || data.checkout;
 
-      if (!checkout?.id) {
+      if (
+        !checkout?.id ||
+        checkout.guest_id !== selectedGuest.guest_id
+      ) {
         throw new Error(
-          "Check-Out completed but checkout record was not returned."
+          "Check-Out completed, but a checkout record for the selected guest was not returned."
         );
       }
 
@@ -1274,6 +1302,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setRefundRemarks("");
 
     setPreCheckoutStep(null);
+
+    setPreCheckoutRefundChoice(null);
 
     setCheckoutFeedbackContext(null);
 
@@ -2027,9 +2057,81 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       }}
                     >
                       {selectedGuest.is_final_checkout_group
-                        ? "Refund calculation and refund memo are required for the final booking check-out."
+                        ? "Choose whether to process a refund for this early departure."
                         : "This room/bed group can be released now. Refund and final bill are handled once, after the final group checks out."}
                     </p>
+                  </button>
+                </div>
+              </div>
+            )}
+
+          {/* ------------------------------------------------ */}
+          {/* PRE CHECKOUT - REFUND CHOICE */}
+          {/* ------------------------------------------------ */}
+
+          {checkoutType === "PRE_CHECKOUT" &&
+            preCheckoutStep === "REFUND_CHOICE" && (
+              <div
+                style={{
+                  background: "#fff",
+                  borderRadius: 18,
+                  border: "1px solid #dbe3ec",
+                  padding: 28,
+                  marginBottom: 22,
+                }}
+              >
+                <h2 style={{ marginTop: 0 }}>Ask for refund?</h2>
+                <p style={{ color: "#64748b", lineHeight: 1.6 }}>
+                  Choose whether to calculate a refund and create a refund memo
+                  before continuing with early check-out.
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: 12,
+                    marginTop: 20,
+                  }}
+                >
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      setPreCheckoutRefundChoice("YES");
+                      setPreCheckoutStep("REFUND_CALCULATION");
+                      setError("");
+                    }}
+                    style={{
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "12px 24px",
+                      background: "#92400e",
+                      color: "#fff",
+                      fontWeight: 800,
+                      cursor: loading ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    YES — PROCESS REFUND
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      setPreCheckoutRefundChoice("NO");
+                      setError("");
+                      void openFinalCheckoutFeedback();
+                    }}
+                    style={{
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 8,
+                      padding: "12px 24px",
+                      background: "#f8fafc",
+                      color: "#334155",
+                      fontWeight: 800,
+                      cursor: loading ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    NO — CONTINUE WITHOUT REFUND
                   </button>
                 </div>
               </div>
@@ -2360,6 +2462,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
             preCheckoutStep === "CHECKOUT" &&
             (checkoutType !== "PRE_CHECKOUT" ||
               refundMemo ||
+              preCheckoutRefundChoice === "NO" ||
               selectedGuest.is_final_checkout_group === false) &&
             !completedCheckout && (
               <div
@@ -2987,7 +3090,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
                   }}
                 >
                   {checkoutType === "PRE_CHECKOUT"
-                    ? "Pre Check-Out → Refund Memo → Final Bill → WhatsApp Feedback"
+                    ? preCheckoutRefundChoice === "NO"
+                      ? "Pre Check-Out → Feedback → Final Bill → WhatsApp Feedback"
+                      : "Pre Check-Out → Refund Memo → Feedback → Final Bill → WhatsApp Feedback"
                     : "Scheduled Check-Out → Final Bill → WhatsApp Feedback"}
                 </div>
 
@@ -3069,20 +3174,19 @@ const CheckOut: React.FC<CheckOutProps> = ({
                 >
                   ✓ Pre Check-Out
                   <br />
-                  ✓ Refund
-                  Calculation
-                  <br />
-                  ✓ Refund Memo:{" "}
-                  {
-                    refundMemo?.memo_number
-                  }
-                  <br />
-                  ✓ Refund Amount:
-                  ₹
-                  {Number(
-                    refundMemo?.amount ||
-                      0
-                  ).toFixed(2)}
+                  {preCheckoutRefundChoice === "NO" ? (
+                    <>✓ No refund requested<br /></>
+                  ) : (
+                    <>
+                      ✓ Refund Calculation
+                      <br />
+                      ✓ Refund Memo: {refundMemo?.memo_number}
+                      <br />
+                      ✓ Refund Amount: ₹
+                      {Number(refundMemo?.amount || 0).toFixed(2)}
+                      <br />
+                    </>
+                  )}
                   <br />
                   ✓ Check-Out
                   completed

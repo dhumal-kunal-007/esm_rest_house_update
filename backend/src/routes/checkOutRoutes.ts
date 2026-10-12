@@ -144,6 +144,7 @@ router.post(
             room_id,
             checked_out_by,
             checkout_type,
+            skip_refund,
             remarks,
         } = req.body;
 
@@ -258,7 +259,8 @@ router.post(
 
             if (
                 isFinalBookingCheckout &&
-                (checkout_type === "PRE_CHECKOUT" || hasPriorEarlyCheckout)
+                (checkout_type === "PRE_CHECKOUT" || hasPriorEarlyCheckout) &&
+                skip_refund !== true
             ) {
                 const refundMemoResult = await client.query(
                     `
@@ -424,6 +426,7 @@ router.post(
             allotment_id,
             checked_out_by,
             checkout_type,
+            skip_refund,
             remarks,
         } = req.body;
 
@@ -676,7 +679,8 @@ router.post(
 
             if (
                 isFinalBookingCheckout &&
-                (checkout_type === "PRE_CHECKOUT" || hasPriorEarlyCheckout)
+                (checkout_type === "PRE_CHECKOUT" || hasPriorEarlyCheckout) &&
+                skip_refund !== true
             ) {
                 const refundMemoResult =
                     await client.query(

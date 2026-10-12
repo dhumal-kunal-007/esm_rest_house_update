@@ -6,6 +6,7 @@ import {
 
 import { pool } from "../config/db.js";
 import { isRoomGenderAllowed } from "../services/roomGenderRestriction.js";
+import { datesOverlap } from "../services/dateOverlap.js";
 
 const router = Router();
 
@@ -351,33 +352,6 @@ async function createBookingApprovals(
    Checkout date is treated as release date.
 ========================================================= */
 
-function datesOverlap(
-  existingCheckIn: string,
-  existingCheckOut: string,
-  requestedCheckIn: string,
-  requestedCheckOut: string
-): boolean {
-  const addOneDay = (date: string): string => {
-    const [year, month, day] = date.split("-").map(Number);
-    return new Date(
-      Date.UTC(year, month - 1, day + 1)
-    ).toISOString().slice(0, 10);
-  };
-  const existingEnd =
-    existingCheckOut <= existingCheckIn
-      ? addOneDay(existingCheckIn)
-      : existingCheckOut;
-  const requestedEnd =
-    requestedCheckOut <= requestedCheckIn
-      ? addOneDay(requestedCheckIn)
-      : requestedCheckOut;
-
-  return (
-    existingCheckIn < requestedEnd &&
-    existingEnd > requestedCheckIn
-  );
-
-}
 
 
 /* =========================================================

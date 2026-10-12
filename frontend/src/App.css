@@ -15385,6 +15385,111 @@ input[type="datetime-local"] {
   background: #fff7e6;
 }
 
+.modern-dashboard .dashboard-section-card {
+  border-color: #d8e1eb;
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(27, 45, 70, 0.045);
+}
+
+.modern-dashboard .dashboard-section-header {
+  min-height: 102px;
+  padding: 22px 26px;
+}
+
+.modern-dashboard .dashboard-section-header h3 {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+
+.modern-dashboard .dashboard-section-header p {
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.modern-dashboard .dashboard-action-grid {
+  padding: 22px;
+  gap: 16px;
+}
+
+.modern-dashboard .dashboard-action {
+  min-height: 84px;
+  padding: 14px 16px;
+  grid-template-columns: 44px minmax(0, 1fr) 28px;
+  gap: 14px;
+  border-color: #dce5ef;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(27, 45, 70, 0.025);
+}
+
+.modern-dashboard .dashboard-action:hover {
+  border-color: #b8c8d9;
+  background: #f9fbfd;
+  box-shadow: 0 8px 18px rgba(27, 45, 70, 0.075);
+  transform: translateY(-2px);
+}
+
+.modern-dashboard .dashboard-action:focus-visible {
+  outline: 3px solid rgba(54, 114, 213, 0.28);
+  outline-offset: 2px;
+}
+
+.modern-dashboard .dashboard-action .action-symbol {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  font-size: 11px;
+}
+
+.modern-dashboard .dashboard-action > span:nth-child(2) {
+  gap: 5px;
+}
+
+.modern-dashboard .dashboard-action strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.modern-dashboard .dashboard-action small {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.modern-dashboard .dashboard-action b {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #f1f5f9;
+  font-size: 16px;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.modern-dashboard .dashboard-action:hover b {
+  transform: translateX(2px);
+  background: #e8eef5;
+  color: #365c86;
+}
+
+@media (max-width: 620px) {
+  .modern-dashboard .dashboard-section-header {
+    min-height: 88px;
+    padding: 18px 20px;
+  }
+
+  .modern-dashboard .dashboard-action-grid {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .modern-dashboard .dashboard-action {
+    min-height: 78px;
+    padding: 12px;
+    gap: 12px;
+  }
+}
+
 .customize-rates-screen {
   min-height: 100vh;
   padding: 34px clamp(18px, 5vw, 72px) 56px;
