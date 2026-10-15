@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api";
 import { getWhatsAppChatUrl } from "../whatsapp";
 import CheckoutFeedback, {
@@ -184,6 +184,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
     useState<BillDetails | null>(null);
 
   const billPreviewRef = useRef<HTMLDivElement>(null);
+  const autoBillGenerationKey = useRef<string | null>(null);
 
   const [showBillSection, setShowBillSection] =
     useState(false);
@@ -270,7 +271,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
   // COMMON RESPONSE HELPER
   // ---------------------------------------------------------
 
-  const readJson = async (
+  const readJson = useCallback(async (
     response: Response
   ) => {
     const data = await response.json();
@@ -289,7 +290,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
     }
 
     return data;
-  };
+  }, []);
 
   // ---------------------------------------------------------
   // LOAD ELIGIBLE GUESTS
@@ -1016,7 +1017,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
   // BILL GENERATION
   // ---------------------------------------------------------
 
-  const generateBill = async (
+  const generateBill = useCallback(async (
     checkoutId: string
   ) => {
     if (!selectedGuest) {
@@ -1121,7 +1122,64 @@ const CheckOut: React.FC<CheckOutProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    additionalPersonCount,
+    checkoutType,
+    confirmLegacyRate,
+    legacyAuthorizationReason,
+    legacyDailyRate,
+    legacyGuestType,
+    otherRelationCount,
+    readJson,
+    selectedGuest,
+    userId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !completedCheckout ||
+      generatedBill ||
+      !legacyPricingRequired ||
+      userRole !== "ADMIN" ||
+      loading ||
+      !legacyDailyRate ||
+      Number(legacyDailyRate) <= 0 ||
+      legacyAuthorizationReason.trim().length < 15 ||
+      !confirmLegacyRate
+    ) {
+      return;
+    }
+
+    const generationKey = JSON.stringify([
+      completedCheckout.id,
+      legacyDailyRate,
+      legacyGuestType,
+      legacyAuthorizationReason.trim(),
+      confirmLegacyRate,
+      additionalPersonCount,
+      otherRelationCount,
+    ]);
+
+    if (autoBillGenerationKey.current === generationKey) {
+      return;
+    }
+
+    autoBillGenerationKey.current = generationKey;
+    void generateBill(completedCheckout.id);
+  }, [
+    additionalPersonCount,
+    completedCheckout,
+    confirmLegacyRate,
+    generatedBill,
+    legacyAuthorizationReason,
+    legacyDailyRate,
+    legacyGuestType,
+    legacyPricingRequired,
+    loading,
+    otherRelationCount,
+    userRole,
+    generateBill,
+  ]);
 
   // ---------------------------------------------------------
   // WHATSAPP FEEDBACK API
@@ -2849,64 +2907,21 @@ const CheckOut: React.FC<CheckOutProps> = ({
                   </div>
                 )}
 
-                <button
-                  onClick={() =>
-                    completedCheckout &&
-                    generateBill(
-                      completedCheckout.id
-                    )
-                  }
-                  disabled={
-                    loading ||
-                    (legacyPricingRequired &&
-                      userRole === "ADMIN" &&
-                      (!legacyDailyRate ||
-                        Number(legacyDailyRate) <= 0 ||
-                        legacyAuthorizationReason.trim().length < 15 ||
-                        !confirmLegacyRate))
-                  }
+                <p
+                  role="status"
+                  aria-live="polite"
                   style={{
-                    marginTop:
-                      22,
-                    padding:
-                      "13px 24px",
-                    border:
-                      "none",
-                    borderRadius:
-                      8,
-                    background:
-                      loading ||
-                      (legacyPricingRequired &&
-                        userRole === "ADMIN" &&
-                        (!legacyDailyRate ||
-                          Number(legacyDailyRate) <= 0 ||
-                          legacyAuthorizationReason.trim().length < 15 ||
-                          !confirmLegacyRate))
-                        ? "#94a3b8"
-                        : "#1f4d36",
-                    color:
-                      "#fff",
-                    fontWeight:
-                      800,
-                    cursor:
-                      loading ||
-                      (legacyPricingRequired &&
-                        userRole === "ADMIN" &&
-                        (!legacyDailyRate ||
-                          Number(legacyDailyRate) <= 0 ||
-                          legacyAuthorizationReason.trim().length < 15 ||
-                          !confirmLegacyRate))
-                        ? "not-allowed"
-                        : "pointer",
+                    marginTop: 18,
+                    color: "#475569",
+                    fontWeight: 600,
                   }}
                 >
                   {loading
-                    ? "GENERATING..."
-                    : legacyPricingRequired &&
-                        userRole === "ADMIN"
-                      ? "AUTHORIZE RATE & GENERATE FINAL BILL"
-                      : "GENERATE FINAL BILL"}
-                </button>
+                    ? "Generating final bill automatically..."
+                    : userRole === "ADMIN"
+                      ? "The final bill will generate automatically after the authorized historical rate is confirmed."
+                      : "An ADMIN must authorize the historical rate before the final bill can be generated."}
+                </p>
               </div>
             )}
 

@@ -51,6 +51,7 @@ import RefundMemo from "./pages/RefundMemo";
 import WhatsAppFeedback from "./pages/WhatsAppFeedback";
 
 import { LanguageProvider } from "./i18n/LanguageContext";
+import { useLanguage } from "./i18n/LanguageContext";
 
 import type {
   BookingDraft,
@@ -226,9 +227,16 @@ interface WorkflowState {
 ========================================= */
 
 function AppContent() {
+  const { language } = useLanguage();
+  const languageRef = useRef(language);
+
   const bookingProgressQueue = useRef<Promise<void>>(
     Promise.resolve()
   );
+
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
 
   /* =========================================
      SPLASH
@@ -379,6 +387,101 @@ function AppContent() {
     message: string;
     onCloseAction?: () => void;
   } | null>(null);
+
+  useEffect(() => {
+    if (
+      !loggedInUser ||
+      ![
+        "DY_DIRECTOR",
+        "SUPERINTENDENT",
+        "WELFARE_ORGANISER",
+        "OLC_REST_HOUSE_MANAGER",
+      ].includes(loggedInUser.role)
+    ) {
+      return;
+    }
+
+    let isCurrent = true;
+
+    const notifyPendingApprovals = async () => {
+      try {
+        const response = await apiFetch(
+          `http://localhost:5000/api/approvals/pending/${loggedInUser.id}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            cache: "no-store",
+          }
+        );
+        const data = await response.json();
+
+        if (!response.ok || !data?.success || !Array.isArray(data.approvals)) {
+          throw new Error(
+            data?.message || "Unable to check pending booking approvals."
+          );
+        }
+
+        if (!isCurrent || data.approvals.length === 0) {
+          return;
+        }
+
+        type PendingApproval = {
+          booking_id: string;
+          booking_reference?: string | null;
+          created_by_name?: string | null;
+          check_in_date?: string | null;
+          expected_check_out_date?: string | null;
+        };
+        const approvalsByBooking = new Map<string, PendingApproval>();
+        data.approvals.forEach((approval: PendingApproval) => {
+          approvalsByBooking.set(approval.booking_id, approval);
+        });
+        const pendingBookings = Array.from(approvalsByBooking.values());
+        const count = pendingBookings.length;
+        const currentLanguage = languageRef.current;
+        const requestList = pendingBookings
+          .map((approval) => {
+            const bookingReference =
+              approval.booking_reference || approval.booking_id;
+            const requester =
+              approval.created_by_name ||
+              (currentLanguage === "mr"
+                ? "विनंतीकर्ता उपलब्ध नाही"
+                : "Requester unavailable");
+            const stayDates =
+              approval.check_in_date && approval.expected_check_out_date
+                ? `\n  ${approval.check_in_date} – ${approval.expected_check_out_date}`
+                : "";
+
+            return `• ${bookingReference} — ${requester}${stayDates}`;
+          })
+          .join("\n");
+
+        setModal({
+          type: "info",
+          title:
+            currentLanguage === "mr"
+              ? "प्रलंबित बुकिंग मंजुरी"
+              : "Pending Booking Approvals",
+          message:
+            currentLanguage === "mr"
+              ? `तुमच्याकडे ${count} बुकिंग${count === 1 ? "" : "ची"} मंजुरी बाकी आहे:\n\n${requestList}\n\nमंजुरी तपासण्यासाठी OK दाबा.`
+              : `You have ${count} booking approval${count === 1 ? "" : "s"} waiting:\n\n${requestList}\n\nSelect OK to review them.`,
+          onCloseAction: () => setCurrentPage("approvals"),
+        });
+      } catch (error) {
+        console.error("Unable to check pending booking approvals:", error);
+      }
+    };
+
+    void notifyPendingApprovals();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [loggedInUser?.id, loggedInUser?.role]);
 
   /* =========================================
      CLOSE MODAL
