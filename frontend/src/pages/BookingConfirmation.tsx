@@ -29,6 +29,8 @@ export interface AcceptedAccommodation {
   guestId: string;
 
   guestName: string;
+
+  guestType?: GuestTypeValue;
 }
 
 export interface BookingConfirmationData {

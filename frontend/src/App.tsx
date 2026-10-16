@@ -1460,6 +1460,11 @@ function AppContent() {
           (accepted: Record<string, unknown>) => ({
             roomId: String(accepted.room_id),
             roomName: String(accepted.room_number),
+            ...(accepted.guest_type === "ESM" ||
+                accepted.guest_type === "SERVING" ||
+                accepted.guest_type === "CIVILIAN"
+              ? { guestType: accepted.guest_type }
+              : {}),
             ...(accepted.bed_id
               ? {
                   bedId: String(accepted.bed_id),
@@ -1484,6 +1489,7 @@ function AppContent() {
           bedNumber: item.bedNumber ?? 0,
           occupantName: item.guestName,
           guestId: item.guestId,
+          ...(item.guestType ? { guestType: item.guestType } : {}),
         });
       }
       for (const item of savedSelections) {
@@ -1492,7 +1498,22 @@ function AppContent() {
           typeof item.roomId === "string" &&
           typeof item.guestId === "string"
         ) {
-          selectionByGuest.set(item.guestId, item as BedSelection);
+          const savedSelection = item as BedSelection;
+          const accepted = selectionByGuest.get(item.guestId);
+          const savedGuestType = savedSelection.guestType;
+          const hasSavedGuestType =
+            savedGuestType === "ESM" ||
+            savedGuestType === "SERVING" ||
+            savedGuestType === "CIVILIAN";
+          selectionByGuest.set(item.guestId, {
+            ...accepted,
+            ...savedSelection,
+            ...(hasSavedGuestType
+              ? { guestType: savedGuestType }
+              : accepted?.guestType
+                ? { guestType: accepted.guestType }
+                : {}),
+          });
         }
       }
       const availabilitySelections = Array.from(
@@ -1784,6 +1805,23 @@ console.log(
       return;
     }
 
+    const bookingCategory = workflow.booking.category
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, "_");
+    if (
+      ["DM", "DORMITORY"].includes(bookingCategory) &&
+      selections.some((selection) => !selection.guestType)
+    ) {
+      setModal({
+        type: "warning",
+        title: "Guest Type Required",
+        message:
+          "Select ESM, Serving, or Civilian for every guest assigned to a Dormitory bed.",
+      });
+      return;
+    }
+
     const bookingGuestIds =
       workflow.booking.guests
         .map(
@@ -1859,6 +1897,10 @@ console.log(
                       }
                     : {}),
 
+                  ...(selection.guestType
+                    ? { guest_type: selection.guestType }
+                    : {}),
+
                   remarks:
                     "Guest accepted selected accommodation.",
 
@@ -1911,6 +1953,9 @@ console.log(
             bedNumber:
               selection.bedNumber ||
               undefined,
+
+            guestType:
+              selection.guestType,
 
             guestId:
               selection.guestId,

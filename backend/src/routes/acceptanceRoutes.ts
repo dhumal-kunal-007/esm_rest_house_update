@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../config/db.js";
+import { isGuestType } from "../services/bookingPricing.js";
 import { hasCompleteAcceptedAccommodations } from "../services/bookingWorkflowProgress.js";
 import { isRoomGenderAllowed } from "../services/roomGenderRestriction.js";
 
@@ -77,6 +78,18 @@ router.post("/", async (req: Request, res: Response) => {
     const remarks =
       req.body.remarks ??
       null;
+    const requestedGuestType = req.body.guest_type;
+
+    if (
+      requestedGuestType !== undefined &&
+      requestedGuestType !== null &&
+      !isGuestType(requestedGuestType)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "The selected guest type is invalid.",
+      });
+    }
 
     if (!bookingId) {
       return res.status(400).json({
@@ -290,6 +303,25 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     const room = roomResult.rows[0];
+    const normalizedRoomCategory = String(room.category_name ?? "")
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, "_");
+    const guestType = isGuestType(requestedGuestType)
+      ? requestedGuestType
+      : null;
+
+    if (
+      normalizedRoomCategory === "DORMITORY" &&
+      (!bedId || !guestType)
+    ) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Select ESM, Serving, or Civilian for every guest assigned to a Dormitory bed.",
+      });
+    }
 
     if (!room.is_active) {
       await client.query("ROLLBACK");
@@ -664,7 +696,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     const priorAcceptanceResult = await client.query(
       `
-      SELECT room_id, bed_id
+      SELECT room_id, bed_id, guest_type
       FROM booking_acceptances
       WHERE booking_id = $1
         AND guest_id = $2
@@ -678,7 +710,8 @@ router.post("/", async (req: Request, res: Response) => {
       !priorAcceptance ||
       String(priorAcceptance.room_id) !== String(roomId) ||
       (priorAcceptance.bed_id ? String(priorAcceptance.bed_id) : null) !==
-        (bedId ? String(bedId) : null);
+        (bedId ? String(bedId) : null) ||
+      (priorAcceptance.guest_type ?? null) !== guestType;
     const approvalMustReset =
       booking.approval_status === "APPROVED" && selectionChanged;
     const shouldRestartPricingWorkflow =
@@ -729,6 +762,7 @@ router.post("/", async (req: Request, res: Response) => {
           guest_id,
           room_id,
           bed_id,
+          guest_type,
           acceptance_status,
           accepted_at,
           remarks
@@ -738,14 +772,16 @@ router.post("/", async (req: Request, res: Response) => {
           $2,
           $3,
           $4,
+          $5,
           'ACCEPTED',
           CURRENT_TIMESTAMP,
-          $5
+          $6
         )
         ON CONFLICT (booking_id, guest_id)
         DO UPDATE SET
           room_id = EXCLUDED.room_id,
           bed_id = EXCLUDED.bed_id,
+          guest_type = EXCLUDED.guest_type,
           acceptance_status = 'ACCEPTED',
           accepted_at = CURRENT_TIMESTAMP,
           remarks = EXCLUDED.remarks
@@ -755,6 +791,7 @@ router.post("/", async (req: Request, res: Response) => {
           guest_id,
           room_id,
           bed_id,
+          guest_type,
           acceptance_status,
           accepted_at,
           remarks,
@@ -765,6 +802,7 @@ router.post("/", async (req: Request, res: Response) => {
           guestId,
           roomId,
           bedId,
+          guestType,
           remarks,
         ]
       );

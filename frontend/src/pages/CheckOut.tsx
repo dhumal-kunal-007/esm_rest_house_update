@@ -230,7 +230,15 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   const billPreviewRef = useRef<HTMLDivElement>(null);
   const autoBillGenerationKey = useRef<string | null>(null);
+  const autoSavedBillNumber = useRef<string | null>(null);
   const resumePendingBillId = useRef<string | null>(null);
+
+  const [billPdfStatus, setBillPdfStatus] = useState<{
+    billNumber: string;
+    filePath?: string;
+    error?: string;
+    saving: boolean;
+  } | null>(null);
 
   const [showBillSection, setShowBillSection] =
     useState(false);
@@ -321,6 +329,46 @@ const CheckOut: React.FC<CheckOutProps> = ({
       });
     }
   }, [generatedBill, showBillSection]);
+
+  const saveBillPdf = useCallback(async (billNumber: string) => {
+    setBillPdfStatus({ billNumber, saving: true });
+    try {
+      if (!window.electronAPI) {
+        throw new Error(
+          "Automatic bill PDF saving is available only in the ESM Rest House desktop app."
+        );
+      }
+      const result = await window.electronAPI.saveBillPdf(billNumber);
+      setBillPdfStatus({
+        billNumber,
+        filePath: result.filePath,
+        saving: false,
+      });
+    } catch (saveError) {
+      console.error("Automatic bill PDF save failed:", saveError);
+      setBillPdfStatus({
+        billNumber,
+        error:
+          saveError instanceof Error
+            ? saveError.message
+            : "Unable to save the bill PDF.",
+        saving: false,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !generatedBill ||
+      !showBillSection ||
+      autoSavedBillNumber.current === generatedBill.bill_number
+    ) {
+      return;
+    }
+
+    autoSavedBillNumber.current = generatedBill.bill_number;
+    void saveBillPdf(generatedBill.bill_number);
+  }, [generatedBill, saveBillPdf, showBillSection]);
 
   // ---------------------------------------------------------
   // COMMON RESPONSE HELPER
@@ -3249,6 +3297,29 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     PRINT / SAVE PDF
                   </button>
                 </div>
+                {billPdfStatus?.billNumber === generatedBill.bill_number && (
+                  <div
+                    role={billPdfStatus.error ? "alert" : "status"}
+                    aria-live="polite"
+                    style={{ marginBottom: 16 }}
+                  >
+                    {billPdfStatus.saving ? (
+                      <span>Automatically saving bill PDF...</span>
+                    ) : billPdfStatus.error ? (
+                      <>
+                        <span>Bill PDF was not saved: {billPdfStatus.error}</span>{" "}
+                        <button
+                          type="button"
+                          onClick={() => void saveBillPdf(generatedBill.bill_number)}
+                        >
+                          RETRY SAVE
+                        </button>
+                      </>
+                    ) : (
+                      <span>Bill PDF saved: {billPdfStatus.filePath}</span>
+                    )}
+                  </div>
+                )}
 
                 <article className="final-bill-printable">
                   <header className="final-bill-header">

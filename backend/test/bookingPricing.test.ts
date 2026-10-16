@@ -5,7 +5,9 @@ import {
   BookingPricingInputError,
   calculateBookingPricing,
   guestTypeForDormitoryRelationship,
+  isGuestType,
   roomRateColumnForGuestType,
+  resolveDormitoryGuestType,
 } from "../src/services/bookingPricing.js";
 
 test("selects an independent configured room rate for each guest type", () => {
@@ -18,6 +20,48 @@ test("uses the booking guest type for SELF and civilian rate for other dormitory
   assert.equal(guestTypeForDormitoryRelationship("SELF", "ESM"), "ESM");
   assert.equal(guestTypeForDormitoryRelationship("self", "SERVING"), "SERVING");
   assert.equal(guestTypeForDormitoryRelationship("SON", "ESM"), "CIVILIAN");
+});
+
+test("uses each explicitly selected dormitory guest type regardless of relationship", () => {
+  assert.equal(resolveDormitoryGuestType("ESM", "WIFE", "CIVILIAN"), "ESM");
+  assert.equal(resolveDormitoryGuestType("SERVING", "SON", "ESM"), "SERVING");
+  assert.equal(resolveDormitoryGuestType("CIVILIAN", "SELF", "ESM"), "CIVILIAN");
+  assert.equal(resolveDormitoryGuestType(null, "WIFE", "ESM"), "CIVILIAN");
+});
+
+test("prices a mixed dormitory assignment with each occupant's selected rate", () => {
+  const rateCard = {
+    esm_room_rate: 80,
+    serving_room_rate: 100,
+    civilian_room_rate: 150,
+  };
+  const guestTypes = [
+    resolveDormitoryGuestType("ESM", "WIFE", "CIVILIAN"),
+    resolveDormitoryGuestType("SERVING", "SON", "ESM"),
+    resolveDormitoryGuestType("CIVILIAN", "SELF", "ESM"),
+  ];
+  const rates = guestTypes.map(
+    (type) => rateCard[roomRateColumnForGuestType(type)]
+  );
+
+  assert.deepEqual(rates, [80, 100, 150]);
+  const pricing = calculateBookingPricing({
+    guestType: "ESM",
+    accommodationCategory: "DORMITORY",
+    checkInDate: "2026-10-01",
+    checkOutDate: "2026-10-02",
+    roomCount: rates.length,
+    unitRates: rates,
+  });
+  assert.equal(pricing.accommodationAmount, 330);
+});
+
+test("recognizes only supported guest types, leaving missing choices invalid", () => {
+  assert.equal(isGuestType("ESM"), true);
+  assert.equal(isGuestType("SERVING"), true);
+  assert.equal(isGuestType("CIVILIAN"), true);
+  assert.equal(isGuestType(undefined), false);
+  assert.equal(isGuestType("OTHER"), false);
 });
 
 test("calculates room rates from guest type and duration", () => {

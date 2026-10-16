@@ -495,7 +495,16 @@ router.post(
                 legacy_rate.daily_rate,
                 CASE
                   WHEN a.bed_id IS NOT NULL
-                       AND UPPER(COALESCE(bg.relationship, 'OTHER')) <> 'SELF'
+                       AND acceptance.guest_type = 'ESM'
+                    THEN card.esm_room_rate
+                  WHEN a.bed_id IS NOT NULL
+                       AND acceptance.guest_type = 'SERVING'
+                    THEN card.serving_room_rate
+                  WHEN a.bed_id IS NOT NULL
+                       AND acceptance.guest_type = 'CIVILIAN'
+                    THEN card.civilian_room_rate
+                  WHEN a.bed_id IS NOT NULL
+                       AND UPPER(COALESCE(occupant.relationship, 'OTHER')) <> 'SELF'
                     THEN card.civilian_room_rate
                   WHEN UPPER(bp.guest_type) = 'ESM'
                     THEN card.esm_room_rate
@@ -510,9 +519,11 @@ router.post(
           INNER JOIN check_ins ci ON ci.allotment_id = a.id
           INNER JOIN check_outs co ON co.allotment_id = a.id
           LEFT JOIN booking_pricing bp ON bp.booking_id = a.booking_id
-          LEFT JOIN booking_guests bg
-            ON bg.booking_id = a.booking_id
-           AND bg.guest_id = a.guest_id
+          LEFT JOIN guests occupant
+            ON occupant.id = a.guest_id
+          LEFT JOIN booking_acceptances acceptance
+            ON acceptance.booking_id = a.booking_id
+           AND acceptance.guest_id = a.guest_id
           LEFT JOIN room_rate_cards card ON card.room_id = a.room_id
           LEFT JOIN booking_legacy_bill_rates legacy_rate
             ON legacy_rate.booking_id = a.booking_id

@@ -5,8 +5,9 @@ import { pool } from "../config/db.js";
 import {
     BookingPricingInputError,
     calculateBookingPricing,
-    guestTypeForDormitoryRelationship,
+    isGuestType,
     roomRateColumnForGuestType,
+    resolveDormitoryGuestType,
     type AccommodationCategory,
     type GuestType,
 } from "../services/bookingPricing.js";
@@ -1811,6 +1812,7 @@ router.get("/:bookingId/resume", async (req, res) => {
                         r.room_number,
                         rc.category_name,
                         ba.bed_id,
+                        ba.guest_type,
                         bd.bed_number
                     FROM booking_acceptances ba
                     INNER JOIN guests g ON g.id = ba.guest_id
@@ -2392,7 +2394,9 @@ router.post("/:bookingId/pricing", async (req, res) => {
                     bd.bed_number,
                     g.guest_name,
                     g.relationship,
-                    card.${rateField} AS primary_rate,
+                    ba.guest_type,
+                    card.esm_room_rate,
+                    card.serving_room_rate,
                     card.civilian_room_rate
                 FROM booking_acceptances ba
                 INNER JOIN booking_guests bg
@@ -2428,17 +2432,23 @@ router.post("/:bookingId/pricing", async (req, res) => {
                     bed_number: number;
                     guest_name: string;
                     relationship: string | null;
-                    primary_rate: string | number | null;
+                    guest_type: string | null;
+                    esm_room_rate: string | number | null;
+                    serving_room_rate: string | number | null;
                     civilian_room_rate: string | number | null;
                 }) => {
                     const relationship = String(row.relationship || "OTHER").toUpperCase();
-                    const occupantGuestType = guestTypeForDormitoryRelationship(
+                    const occupantGuestType = resolveDormitoryGuestType(
+                        isGuestType(row.guest_type) ? row.guest_type : null,
                         relationship,
                         guestType
                     );
-                    const configuredRate = occupantGuestType === "CIVILIAN"
-                        ? row.civilian_room_rate
-                        : row.primary_rate;
+                    const configuredRate =
+                        occupantGuestType === "ESM"
+                            ? row.esm_room_rate
+                            : occupantGuestType === "SERVING"
+                                ? row.serving_room_rate
+                                : row.civilian_room_rate;
 
                     return {
                         roomName: row.room_number,
