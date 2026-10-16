@@ -9,7 +9,7 @@ interface RoomRateCard {
   category_name: string;
   total_beds: number;
   is_bookable: boolean;
-  gender_restriction: string;
+  gender_restriction: GenderRestriction;
   room_note: string | null;
   room_capacity: number | string | null;
   bed_capacity: number | string | null;
@@ -25,6 +25,8 @@ type EditableRateField =
   | "esm_room_rate"
   | "serving_room_rate"
   | "civilian_room_rate";
+
+type GenderRestriction = "ANY" | "MALE" | "FEMALE";
 
 type RoomGroup = "AC" | "NAC" | "DM" | "HALL" | "VIP" | "OTHER";
 
@@ -365,6 +367,10 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
                 ...currentRoom,
                 room_number: data.room.room_number,
                 category_name: data.room.category_name,
+                gender_restriction:
+                  identity.category === "DM"
+                    ? currentRoom.gender_restriction
+                    : "ANY",
               }
             : currentRoom
         )
@@ -427,6 +433,7 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
         </label>
         <button
           type="button"
+          className="customize-room-identity-save"
           onClick={() => void saveRoomIdentity(room)}
           disabled={savingKey !== null}
         >
@@ -434,8 +441,94 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
             ? tr("Saving…", "जतन होत आहे...")
             : tr("Save room type / number", "प्रकार / क्रमांक जतन करा")}
         </button>
+        {getRoomGroup(room) === "DM" && (
+          <div className="customize-room-gender-restriction">
+            <label>
+              <span>{tr("Gender restriction", "लिंग मर्यादा")}</span>
+              <select
+                aria-label={`${room.room_number} gender restriction`}
+                value={room.gender_restriction}
+                onChange={(event) =>
+                  setRooms((current) =>
+                    current.map((currentRoom) =>
+                      currentRoom.id === room.id
+                        ? {
+                            ...currentRoom,
+                            gender_restriction:
+                              event.target.value as GenderRestriction,
+                          }
+                        : currentRoom
+                    )
+                  )
+                }
+              >
+                <option value="ANY">{tr("Any gender", "सर्व लिंग")}</option>
+                <option value="MALE">{tr("Male only", "फक्त पुरुष")}</option>
+                <option value="FEMALE">{tr("Female only", "फक्त महिला")}</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => void saveGenderRestriction(room)}
+              disabled={savingKey !== null}
+            >
+              {savingKey === `gender:${room.id}`
+                ? tr("Saving…", "जतन होत आहे...")
+                : tr("Save restriction", "मर्यादा जतन करा")}
+            </button>
+          </div>
+        )}
       </div>
     );
+  };
+
+  const saveGenderRestriction = async (room: RoomRateCard) => {
+    const key = `gender:${room.id}`;
+    setSavingKey(key);
+    setMessage("");
+    setError("");
+    try {
+      const response = await apiFetch(
+        `http://localhost:5000/api/rooms/${room.id}/gender-restriction`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gender_restriction: room.gender_restriction,
+          }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message || "Unable to update the room gender restriction."
+        );
+      }
+      setRooms((current) =>
+        current.map((currentRoom) =>
+          currentRoom.id === room.id
+            ? {
+                ...currentRoom,
+                gender_restriction: data.room.gender_restriction,
+              }
+            : currentRoom
+        )
+      );
+      setMessage(
+        tr(
+          `Saved gender restriction for ${room.room_number}.`,
+          `${room.room_number} साठी लिंग मर्यादा जतन केली.`
+        )
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to update the room gender restriction."
+      );
+    } finally {
+      setSavingKey(null);
+    }
   };
 
   const toggleMaintenance = async (room: RoomRateCard) => {

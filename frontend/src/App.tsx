@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  lazy,
   useRef,
   useState,
 } from "react";
@@ -18,37 +19,35 @@ import type {
   AppModalType,
 } from "./components/AppModal";
 
-import OtherAuthorityRooms from "./pages/OtherAuthorityRooms";
+const OtherAuthorityRooms = lazy(() => import("./pages/OtherAuthorityRooms"));
 
 import type {
   ExplicitAuthoritySelection,
 } from "./AuthoritySelection";
 
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import DailyReport from "./pages/DailyReport";
-import CreateUser from "./pages/CreateUser";
-import Availability from "./pages/Availability";
-import CustomizeRates from "./pages/CustomizeRates";
-import RoomCustomizations from "./pages/RoomCustomizations";
-import Booking from "./pages/Booking";
-import CheckIn from "./pages/CheckIn";
-import CheckOut from "./pages/CheckOut";
-import Housekeeping from "./pages/Housekeeping";
-import Approval from "./pages/Approval";
-import LostAndFound from "./pages/LostAndFound";
-
-import GuestType from "./pages/GuestType";
-import Rate from "./pages/Rate";
-import BookingConfirmation from "./pages/BookingConfirmation";
-import BookingApproval from "./pages/BookingApproval";
-import Payment from "./pages/Payment";
-import Invoice from "./pages/Invoice";
-import RoomLocked from "./pages/RoomLocked";
-import PreCheckOut from "./pages/PreCheckOut";
-import RefundCalculation from "./pages/RefundCalculation";
-import RefundMemo from "./pages/RefundMemo";
-import WhatsAppFeedback from "./pages/WhatsAppFeedback";
+const Login = lazy(() => import("./pages/Login"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const DailyReport = lazy(() => import("./pages/DailyReport"));
+const CreateUser = lazy(() => import("./pages/CreateUser"));
+const Availability = lazy(() => import("./pages/Availability"));
+const CustomizeRates = lazy(() => import("./pages/CustomizeRates"));
+const Booking = lazy(() => import("./pages/Booking"));
+const CheckIn = lazy(() => import("./pages/CheckIn"));
+const CheckOut = lazy(() => import("./pages/CheckOut"));
+const Housekeeping = lazy(() => import("./pages/Housekeeping"));
+const Approval = lazy(() => import("./pages/Approval"));
+const LostAndFound = lazy(() => import("./pages/LostAndFound"));
+const GuestType = lazy(() => import("./pages/GuestType"));
+const Rate = lazy(() => import("./pages/Rate"));
+const BookingConfirmation = lazy(() => import("./pages/BookingConfirmation"));
+const BookingApproval = lazy(() => import("./pages/BookingApproval"));
+const Payment = lazy(() => import("./pages/Payment"));
+const Invoice = lazy(() => import("./pages/Invoice"));
+const RoomLocked = lazy(() => import("./pages/RoomLocked"));
+const PreCheckOut = lazy(() => import("./pages/PreCheckOut"));
+const RefundCalculation = lazy(() => import("./pages/RefundCalculation"));
+const RefundMemo = lazy(() => import("./pages/RefundMemo"));
+const WhatsAppFeedback = lazy(() => import("./pages/WhatsAppFeedback"));
 
 import { LanguageProvider } from "./i18n/LanguageContext";
 import { useLanguage } from "./i18n/LanguageContext";
@@ -324,7 +323,6 @@ function AppContent() {
     | "booking"
     | "availability"
     | "customize-rates"
-    | "room-customizations"
     | "create-user"
     | "otherAuthorityRooms"
     | "check-in"
@@ -4675,28 +4673,6 @@ const handleRoomLockedContinue = async (
      DIRECT AVAILABILITY
   ========================================= */
 
-  if (currentPage === "room-customizations") {
-    if (loggedInUser.role !== "ADMIN") {
-      return (
-        <main className="room-customizations-screen">
-          <section className="customize-rates-empty">
-            <strong>Administrator access required</strong>
-            <button type="button" onClick={handleBackToDashboard}>
-              ← Dashboard
-            </button>
-          </section>
-        </main>
-      );
-    }
-
-    return (
-      <>
-        <RoomCustomizations onBack={handleBackToDashboard} />
-        {renderModal()}
-      </>
-    );
-  }
-
   if (currentPage === "customize-rates") {
     if (loggedInUser.role !== "ADMIN") {
       return (
@@ -4941,10 +4917,6 @@ const handleRoomLockedContinue = async (
 
         onCustomizeRates={() => {
           setCurrentPage("customize-rates");
-        }}
-
-        onRoomCustomizations={() => {
-          setCurrentPage("room-customizations");
         }}
 
         onOpenOtherAuthorityRooms={() => {

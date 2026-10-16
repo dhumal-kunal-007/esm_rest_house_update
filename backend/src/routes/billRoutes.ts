@@ -100,6 +100,9 @@ router.post(
           a.room_id,
           a.bed_id,
           a.allotment_status,
+          card.esm_room_rate AS rate_card_esm_rate,
+          card.serving_room_rate AS rate_card_serving_rate,
+          card.civilian_room_rate AS rate_card_civilian_rate,
 
           (
             SELECT string_agg(DISTINCT billing_room.room_number, ', ' ORDER BY billing_room.room_number)
@@ -141,6 +144,9 @@ router.post(
 
         LEFT JOIN beds bd
           ON bd.id = a.bed_id
+
+        LEFT JOIN room_rate_cards card
+          ON card.room_id = a.room_id
 
         LEFT JOIN booking_legacy_bill_rates legacy_rate
           ON legacy_rate.booking_id = b.id
@@ -253,6 +259,11 @@ router.post(
           res.status(409).json({
             code: "LEGACY_PRICING_REQUIRED",
             message: validation.error,
+            rate_card_rates: {
+              ESM: checkout.rate_card_esm_rate,
+              SERVING: checkout.rate_card_serving_rate,
+              CIVILIAN: checkout.rate_card_civilian_rate,
+            },
           });
           return;
         }

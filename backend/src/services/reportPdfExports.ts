@@ -103,16 +103,16 @@ const upcomingTable = (bookings: UpcomingAdvanceBooking[]): string =>
 const htmlDocument = (title: string, body: string): string => `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <style>
-@page { size: A4 landscape; margin: 12mm; }
+@page { size: A4 portrait; margin: 10mm; }
 * { box-sizing: border-box; }
 body { color: #172b4d; font: 10px Arial, sans-serif; margin: 0; }
 h1 { font-size: 17px; margin: 0 0 5px; text-align: center; }
-h2 { background: #eaf0f5; border: 1px solid #667085; font-size: 11px; margin: 15px 0 0; padding: 6px; text-align: center; }
+h2 { background: #eaf0f5; border: 1px solid #667085; break-after: avoid; font-size: 11px; margin: 15px 0 0; padding: 6px; text-align: center; }
 p { margin: 4px 0; }
 .header { border-bottom: 1px solid #8090a2; margin-bottom: 10px; padding-bottom: 8px; text-align: center; }
 .meta { color: #4b5d72; }
-table { border-collapse: collapse; font-size: 8.5px; margin: 0; width: 100%; }
-th, td { border: 1px solid #788698; padding: 4px 5px; text-align: center; vertical-align: top; }
+table { border-collapse: collapse; font-size: 9px; margin: 0; table-layout: fixed; width: 100%; }
+th, td { border: 1px solid #788698; overflow-wrap: anywhere; padding: 4px 5px; text-align: center; vertical-align: top; }
 thead { display: table-header-group; }
 thead th { background: #f1f5f9; font-weight: 700; }
 tbody tr { break-inside: avoid; }
