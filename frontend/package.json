@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Desktop booking and management system for ESM Rest House.",
   "author": "ESM Rest House",
   "type": "module",
@@ -9,11 +9,13 @@
   "scripts": {
     "dev": "concurrently -k \"npm --prefix ../backend run dev\" \"vite\" \"wait-on http://localhost:5173 http://localhost:5000/api/health && electron .\"",
     "build": "tsc -b && vite build",
-    "package:win": "npm run build && electron-builder --win nsis",
+    "package:win": "npm run build && npm --prefix ../backend run build && node scripts/prepare-backend.cjs && npm install --omit=dev --prefix desktop-backend-build && electron-builder --win nsis",
+    "release:win": "npm run build && npm --prefix ../backend run build && node scripts/prepare-backend.cjs && npm install --omit=dev --prefix desktop-backend-build && electron-builder --win nsis --publish always",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
@@ -45,6 +47,31 @@
       "dist/**/*",
       "electron/**/*",
       "package.json"
+    ],
+    "directories": {
+      "output": "release-auto-update"
+    },
+    "extraResources": [
+      {
+        "from": "desktop-backend-build/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "desktop-backend-build/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "desktop-backend-build/package.json",
+        "to": "backend/package.json"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "dhumal-kunal-007",
+        "repo": "esm_rest_house_update",
+        "releaseType": "release"
+      }
     ],
     "win": {
       "target": "nsis"

@@ -1,6 +1,246 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  utilityProcess,
+} = require("electron");
+const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs/promises");
+const net = require("node:net");
 const path = require("path");
+
+let mainWindow;
+let backendProcess;
+
+const backendUrl = "http://127.0.0.1:5000/api/health";
+const requiredEnvironmentKeys = [
+  "DB_HOST",
+  "DB_PORT",
+  "DB_NAME",
+  "DB_USER",
+  "DB_PASSWORD",
+  "AUTH_TOKEN_SECRET",
+];
+
+function readEnvironmentValue(contents, key) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = contents.match(
+    new RegExp(`^\\s*${escapedKey}\\s*=\\s*(.*)$`, "m")
+  );
+  if (!match) {
+    return "";
+  }
+
+  return match[1].trim().replace(/^(["'])(.*)\1$/, "$2");
+}
+
+async function ensureBackendConfiguration() {
+  const configDirectory = path.join(app.getPath("userData"), "backend");
+  const configPath = path.join(configDirectory, ".env");
+
+  try {
+    await fs.access(configPath);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+
+    const selection = await dialog.showOpenDialog({
+      title: "Select the backend .env configuration file",
+      buttonLabel: "Use configuration",
+      properties: ["openFile"],
+      filters: [
+        { name: "Environment file", extensions: ["env"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+
+    if (selection.canceled || selection.filePaths.length === 0) {
+      throw new Error(
+        "Backend configuration is required. Select the backend .env file to continue."
+      );
+    }
+
+    await fs.mkdir(configDirectory, { recursive: true });
+    await fs.copyFile(selection.filePaths[0], configPath);
+  }
+
+  const contents = await fs.readFile(configPath, "utf8");
+  validateBackendConfiguration(contents, configPath);
+
+  return { configDirectory, configPath };
+}
+
+function validateBackendConfiguration(contents, configPath) {
+  const missingKeys = requiredEnvironmentKeys.filter(
+    (key) => !readEnvironmentValue(contents, key)
+  );
+  const tokenSecret = readEnvironmentValue(contents, "AUTH_TOKEN_SECRET");
+  const dbPort = Number(readEnvironmentValue(contents, "DB_PORT"));
+
+  if (!Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
+    missingKeys.push("DB_PORT (a valid port number)");
+  }
+
+  if (
+    tokenSecret.startsWith("REPLACE_") ||
+    Buffer.byteLength(tokenSecret, "utf8") < 32
+  ) {
+    missingKeys.push("AUTH_TOKEN_SECRET (at least 32 non-placeholder bytes)");
+  }
+
+  if (missingKeys.length > 0) {
+    throw new Error(
+      `The backend .env file at ${configPath} is missing valid settings: ${missingKeys.join(", ")}.`
+    );
+  }
+}
+
+function isPortAvailable() {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({
+      host: "127.0.0.1",
+      port: 5000,
+    });
+
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("error", (error) => {
+      socket.destroy();
+      if (error.code === "ECONNREFUSED" || error.code === "ETIMEDOUT") {
+        resolve(true);
+      } else {
+        reject(error);
+      }
+    });
+  });
+}
+
+async function waitForBackend() {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(backendUrl, {
+        signal: AbortSignal.timeout(2000),
+      });
+    } catch (error) {
+      if (
+        error.name === "TypeError" &&
+        ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH"].includes(
+          error.cause?.code
+        )
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+      if (error.name === "TimeoutError" || error.name === "AbortError") {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+      throw error;
+    }
+
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      throw new Error(
+        result?.message ||
+          "The backend is running, but it cannot connect to PostgreSQL."
+      );
+    }
+
+    const result = await response.json();
+    if (result.success && result.database === "PostgreSQL connected") {
+      return;
+    }
+
+    throw new Error(
+      result.message || "The backend is not ready to serve requests."
+    );
+  }
+
+  throw new Error(
+    "The backend did not start within 30 seconds. Check that PostgreSQL is running."
+  );
+}
+
+async function startPackagedBackend() {
+  if (!(await isPortAvailable())) {
+    await waitForBackend();
+    return;
+  }
+
+  const { configDirectory } = await ensureBackendConfiguration();
+  const backendEntry = path.join(
+    process.resourcesPath,
+    "backend",
+    "dist",
+    "server.js"
+  );
+
+  backendProcess = utilityProcess.fork(backendEntry, [], {
+    cwd: configDirectory,
+    env: {
+      ...process.env,
+      PORT: "5000",
+    },
+    stdio: "pipe",
+  });
+
+  backendProcess.stdout?.on("data", (data) => {
+    console.log(`[backend] ${data.toString().trimEnd()}`);
+  });
+  backendProcess.stderr?.on("data", (data) => {
+    console.error(`[backend] ${data.toString().trimEnd()}`);
+  });
+  backendProcess.on("spawn", () => {
+    console.log("Packaged backend process started.");
+  });
+  backendProcess.on("exit", (code) => {
+    if (code !== 0) {
+      console.error(`Packaged backend exited with code ${code}.`);
+    }
+  });
+
+  await waitForBackend();
+}
+
+function configureAutoUpdates() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("error", (error) => {
+    console.error("Desktop app update check failed:", error);
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: "info",
+        title: "Update ready",
+        message: `ESM Rest House ${info.version} is ready to install.`,
+        detail: "Restart the app now to finish installing the update.",
+        buttons: ["Restart now", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          autoUpdater.quitAndInstall();
+        }
+      })
+      .catch((error) => {
+        console.error("Unable to show the update-ready message:", error);
+      });
+  });
+
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((error) => {
+      console.error("Unable to check for desktop app updates:", error);
+    });
+  }, 5000);
+}
 
 ipcMain.handle("invoice:save-pdf", async (event, invoiceNumber) => {
   if (typeof invoiceNumber !== "string" || !/^\d{8}$/.test(invoiceNumber)) {
@@ -57,7 +297,7 @@ ipcMain.handle("refund-memo:save-pdf", async (event, memoNumber) => {
 });
 
 async function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1000,
@@ -85,14 +325,42 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
-  createWindow();
+app.whenReady().then(async () => {
+  if (app.isPackaged) {
+    try {
+      await startPackagedBackend();
+    } catch (error) {
+      console.error("Unable to start the packaged backend:", error);
+      await dialog.showMessageBox({
+        type: "error",
+        title: "ESM Rest House could not start",
+        message: error.message,
+        detail:
+          "Check that PostgreSQL is running and that the selected backend .env configuration is correct.",
+      });
+      app.quit();
+      return;
+    }
+  }
+
+  await createWindow();
+
+  if (app.isPackaged && process.platform === "win32") {
+    configureAutoUpdates();
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
+});
+
+app.on("before-quit", () => {
+  if (backendProcess && !backendProcess.killed) {
+    backendProcess.kill();
+    backendProcess = undefined;
+  }
 });
 
 app.on("window-all-closed", () => {

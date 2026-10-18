@@ -82,6 +82,10 @@ out
 .nuxt
 dist
 .output
+frontend/release/
+frontend/release-auto-update/
+frontend/backend-runtime/
+frontend/desktop-backend-build/
 
 # Gatsby files
 .cache/

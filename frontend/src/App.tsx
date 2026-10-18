@@ -385,6 +385,7 @@ function AppContent() {
     type: AppModalType;
     title: string;
     message: string;
+    className?: string;
     onCloseAction?: () => void;
   } | null>(null);
 
@@ -452,7 +453,7 @@ function AppContent() {
                 : "Requester unavailable");
             const stayDates =
               approval.check_in_date && approval.expected_check_out_date
-                ? `\n  ${approval.check_in_date} – ${approval.expected_check_out_date}`
+                ? `\n  ${formatApprovalDate(approval.check_in_date, currentLanguage)} – ${formatApprovalDate(approval.expected_check_out_date, currentLanguage)}`
                 : "";
 
             return `• ${bookingReference} — ${requester}${stayDates}`;
@@ -461,6 +462,7 @@ function AppContent() {
 
         setModal({
           type: "info",
+          className: "app-modal-approval-notice",
           title:
             currentLanguage === "mr"
               ? "प्रलंबित बुकिंग मंजुरी"
@@ -2994,6 +2996,8 @@ const handleRoomLockedContinue = async (
 
     return (
       <AppModal
+        className={modal.className}
+
         type={
           modal.type
         }
@@ -3010,6 +3014,10 @@ const handleRoomLockedContinue = async (
 
         showCancel={
           false
+        }
+
+        onConfirm={
+          closeModal
         }
 
         onClose={
@@ -4999,3 +5007,24 @@ function App() {
 }
 
 export default App;
+
+function formatApprovalDate(
+  value: string,
+  language: string
+): string {
+  const datePart = value.slice(0, 10);
+  const date = new Date(`${datePart}T12:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleDateString(
+    language === "mr" ? "mr-IN" : "en-IN",
+    {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }
+  );
+}

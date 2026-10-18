@@ -27,6 +27,8 @@ interface AppModalProps {
 
   type?: AppModalType;
 
+  className?: string;
+
   title: string;
 
   message?: string;
@@ -90,6 +92,8 @@ function getIcon(
 function AppModal({
 
   type = "info",
+
+  className,
 
   title,
 
@@ -323,6 +327,75 @@ function AppModal({
               scale(1);
           }
 
+        }
+
+
+        .app-modal-approval-notice {
+          max-width: 560px;
+          border: 1px solid #d8e3f0;
+          border-radius: 20px;
+          box-shadow:
+            0 28px 80px rgba(15, 23, 42, 0.32),
+            0 8px 24px rgba(15, 23, 42, 0.12);
+        }
+
+
+        .app-modal-approval-notice .app-modal-header {
+          padding: 21px 24px;
+          background:
+            linear-gradient(125deg, #173b63 0%, #285b8f 100%);
+        }
+
+
+        .app-modal-approval-notice .app-modal-icon {
+          width: 42px;
+          height: 42px;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.13);
+        }
+
+
+        .app-modal-approval-notice .app-modal-header h2 {
+          font-size: 17px;
+          letter-spacing: 0.01em;
+        }
+
+
+        .app-modal-approval-notice .app-modal-close {
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+
+        .app-modal-approval-notice .app-modal-close:hover {
+          background: rgba(255, 255, 255, 0.2);
+        }
+
+
+        .app-modal-approval-notice .app-modal-body {
+          max-height: min(62vh, 560px);
+          overflow-y: auto;
+          padding: 24px;
+        }
+
+
+        .app-modal-approval-notice .app-modal-message {
+          color: #334155;
+          font-size: 14px;
+          line-height: 1.75;
+          overflow-wrap: anywhere;
+        }
+
+
+        .app-modal-approval-notice .app-modal-footer {
+          padding: 0 24px 24px;
+        }
+
+
+        .app-modal-approval-notice .app-modal-confirm {
+          min-width: 112px;
+          border-radius: 10px;
+          padding: 11px 22px;
         }
 
 
@@ -721,10 +794,21 @@ function AppModal({
           }
 
 
+          .app-modal-approval-notice .app-modal-header {
+            padding: 17px 18px;
+          }
+
+
           .app-modal-body {
 
             padding:
               20px 18px 8px;
+          }
+
+
+          .app-modal-approval-notice .app-modal-body {
+            max-height: 60vh;
+            padding: 20px 18px;
           }
 
 
@@ -754,7 +838,7 @@ function AppModal({
 
       <div
         className={
-          `app-modal app-modal-${type}`
+          `app-modal app-modal-${type}${className ? ` ${className}` : ""}`
         }
         role="dialog"
         aria-modal="true"
