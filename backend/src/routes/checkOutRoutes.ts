@@ -4,6 +4,77 @@ import { pool } from "../config/db.js";
 
 const router = express.Router();
 
+router.get(
+    "/pending-bills",
+    async (req: Request, res: Response): Promise<void> => {
+        if (String(req.authUser?.role || "").toUpperCase() !== "ADMIN") {
+            res.status(403).json({
+                message: "Only an ADMIN can resume pending final bills.",
+            });
+            return;
+        }
+
+        try {
+            const result = await pool.query(`
+                SELECT DISTINCT ON (b.id)
+                    co.id AS checkout_id,
+                    co.booking_id,
+                    co.guest_id,
+                    co.allotment_id,
+                    co.check_out_time,
+                    b.booking_reference,
+                    sm.full_name AS booking_person_name,
+                    bp.guest_type,
+                    g.guest_name,
+                    g.mobile_number,
+                    a.room_id,
+                    r.room_number,
+                    a.bed_id,
+                    bd.bed_number,
+                    b.check_in_date,
+                    b.expected_check_out_date
+                FROM bookings b
+                INNER JOIN check_outs co
+                    ON co.booking_id = b.id
+                INNER JOIN allotments a
+                    ON a.id = co.allotment_id
+                INNER JOIN rooms r
+                    ON r.id = a.room_id
+                INNER JOIN guests g
+                    ON g.id = co.guest_id
+                LEFT JOIN beds bd
+                    ON bd.id = a.bed_id
+                LEFT JOIN booking_service_members sm
+                    ON sm.booking_id = b.id
+                LEFT JOIN booking_pricing bp
+                    ON bp.booking_id = b.id
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM bills existing_bill
+                    WHERE existing_bill.booking_id = b.id
+                )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM check_ins ci
+                    LEFT JOIN check_outs pending_checkout
+                        ON pending_checkout.allotment_id = ci.allotment_id
+                       AND pending_checkout.guest_id = ci.guest_id
+                    WHERE ci.booking_id = b.id
+                      AND pending_checkout.id IS NULL
+                  )
+                ORDER BY b.id, co.check_out_time DESC, co.id DESC
+            `);
+
+            res.json(result.rows);
+        } catch (error) {
+            console.error("Error loading pending final bills:", error);
+            res.status(500).json({
+                message: "Failed to load pending final bills.",
+            });
+        }
+    }
+);
+
 /*
  * GET /api/check-outs/eligible
  *

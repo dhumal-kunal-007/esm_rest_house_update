@@ -1239,6 +1239,141 @@ router.put("/:roomId/rate-card", async (req, res) => {
   }
 });
 
+router.put("/:roomId/gender-restriction", async (req, res) => {
+  if (req.authUser?.role !== "ADMIN") {
+    return res.status(403).json({
+      success: false,
+      message: "Only an ADMIN can update room gender restrictions.",
+    });
+  }
+
+  const { roomId } = req.params;
+  const genderRestriction =
+    typeof req.body?.gender_restriction === "string"
+      ? req.body.gender_restriction.trim().toUpperCase()
+      : "";
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      roomId
+    ) ||
+    !["ANY", "MALE", "FEMALE"].includes(genderRestriction)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Provide a valid room ID and gender restriction.",
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const roomResult = await client.query(
+      `
+      SELECT r.id, r.room_number, r.gender_restriction,
+        rc.category_name
+      FROM rooms r
+      INNER JOIN room_categories rc ON rc.id = r.category_id
+      WHERE r.id = $1 AND r.is_active = TRUE
+      FOR UPDATE OF r
+      `,
+      [roomId]
+    );
+    if (roomResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Active room was not found.",
+      });
+    }
+
+    const room = roomResult.rows[0];
+    const normalizedCategory = String(room.category_name)
+      .trim()
+      .toUpperCase()
+      .replace(/[\s-]+/g, "_");
+    if (
+      normalizedCategory !== "DM" &&
+      normalizedCategory !== "DORMITORY" &&
+      !normalizedCategory.includes("DORMITORY")
+    ) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        success: false,
+        message: "Gender restrictions can only be changed for DM/Dormitory rooms.",
+      });
+    }
+
+    if (room.gender_restriction !== genderRestriction) {
+      const roomUseResult = await client.query(
+        `
+        SELECT EXISTS (
+          SELECT 1
+          FROM booking_acceptances ba
+          INNER JOIN bookings b ON b.id = ba.booking_id
+          WHERE ba.room_id = $1
+            AND ba.acceptance_status = 'ACCEPTED'
+            AND b.expected_check_out_date >= CURRENT_DATE
+            AND b.booking_status NOT IN ('CANCELLED', 'REJECTED')
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM allotments a
+          WHERE a.room_id = $1
+            AND a.allotment_status = 'ALLOTTED'
+            AND NOT EXISTS (
+              SELECT 1 FROM check_outs co WHERE co.allotment_id = a.id
+            )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM beds bed
+          WHERE bed.room_id = $1
+            AND bed.is_active = TRUE
+            AND UPPER(bed.bed_status) <> 'AVAILABLE'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM housekeeping_tasks ht
+          WHERE ht.room_id = $1
+            AND UPPER(REPLACE(ht.task_status, ' ', '_')) <> 'CLEARED'
+        ) AS has_live_use
+        `,
+        [roomId]
+      );
+      if (roomUseResult.rows[0].has_live_use) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          success: false,
+          message:
+            "The gender restriction cannot be changed while this room has an active/future booking, allotment, unavailable bed, or unfinished housekeeping task.",
+        });
+      }
+    }
+
+    const updatedRoom = await client.query(
+      `
+      UPDATE rooms
+      SET gender_restriction = $2,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, room_number, gender_restriction
+      `,
+      [roomId, genderRestriction]
+    );
+    await client.query("COMMIT");
+    return res.json({ success: true, room: updatedRoom.rows[0] });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Room gender restriction update error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update the room gender restriction.",
+    });
+  } finally {
+    client.release();
+  }
+});
+
 /*
 =========================================================
 GET ROOMS FOR LOGGED-IN USER

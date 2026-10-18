@@ -7,6 +7,7 @@ import {
 import { pool } from "../config/db.js";
 import { isRoomGenderAllowed } from "../services/roomGenderRestriction.js";
 import { datesOverlap } from "../services/dateOverlap.js";
+import { checkBedDateConflict } from "../services/bedDateConflict.js";
 
 const router = Router();
 
@@ -415,109 +416,6 @@ async function checkRoomDateConflict(
       `,
       [
         roomId,
-        bookingId,
-      ]
-    );
-
-
-  for (
-    const row of result.rows
-  ) {
-
-    if (
-      datesOverlap(
-        row.check_in_date,
-        row.expected_check_out_date,
-        checkInDate,
-        checkOutDate
-      )
-    ) {
-
-      return {
-        conflict: true,
-        bookingReference:
-          row.booking_reference,
-        checkInDate:
-          row.check_in_date,
-        checkOutDate:
-          row.expected_check_out_date,
-      };
-
-    }
-
-  }
-
-
-  return {
-    conflict: false,
-  };
-
-}
-
-
-/* =========================================================
-   HELPER
-   CHECK BED DATE CONFLICT
-
-   Used for:
-   DM / HALL
-========================================================= */
-
-async function checkBedDateConflict(
-  client: any,
-  bedId: string,
-  bookingId: string,
-  checkInDate: string,
-  checkOutDate: string
-): Promise<{
-  conflict: boolean;
-  bookingReference?: string;
-  checkInDate?: string;
-  checkOutDate?: string;
-}> {
-
-  await client.query(
-    `
-    SELECT r.id
-    FROM rooms r
-    INNER JOIN beds bed
-      ON bed.room_id = r.id
-    WHERE bed.id = $1
-    FOR UPDATE OF r
-    `,
-    [bedId]
-  );
-
-  const result =
-    await client.query(
-      `
-      SELECT
-        b.booking_reference,
-        b.check_in_date,
-        b.expected_check_out_date
-
-      FROM allotments a
-
-      INNER JOIN bookings b
-        ON b.id = a.booking_id
-
-      WHERE
-        (a.bed_id = $1 OR a.bed_id IS NULL)
-
-        AND a.booking_id <> $2
-
-        AND a.allotment_status = 'ALLOTTED'
-
-        AND b.booking_status NOT IN (
-          'CANCELLED',
-          'REJECTED'
-        )
-
-      ORDER BY
-        b.check_in_date ASC
-      `,
-      [
-        bedId,
         bookingId,
       ]
     );

@@ -50,7 +50,7 @@ router.get("/summary", async (req, res) => {
         )::INTEGER AS available_beds,
 
 
-        /* Beds currently occupied */
+        /* Beds with a current check-in, not stale stored status */
         (
           SELECT COUNT(*)
           FROM beds b
@@ -61,29 +61,45 @@ router.get("/summary", async (req, res) => {
             AND r.is_active = TRUE
             AND r.room_usage = 'GUEST'
             AND (
-              UPPER(b.bed_status) = 'OCCUPIED'
-              OR (
-                UPPER(b.bed_status) = 'BOOKED'
-                AND EXISTS (
-                  SELECT 1
-                  FROM allotments a
-                  INNER JOIN check_ins ci
-                    ON ci.allotment_id = a.id
-                  WHERE
-                    a.room_id = r.id
-                    AND a.bed_id IS NULL
-                    AND a.allotment_status = 'ALLOTTED'
-                    AND ci.check_in_time <=
-                      (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
-                    AND NOT EXISTS (
-                      SELECT 1
-                      FROM check_outs co
-                      WHERE
-                        co.allotment_id = a.id
-                        AND co.check_out_time <=
-                          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
-                    )
-                )
+              EXISTS (
+                SELECT 1
+                FROM allotments a
+                INNER JOIN check_ins ci
+                  ON ci.allotment_id = a.id
+                WHERE
+                  a.room_id = r.id
+                  AND a.bed_id = b.id
+                  AND a.allotment_status = 'ALLOTTED'
+                  AND ci.check_in_time <=
+                    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM check_outs co
+                    WHERE
+                      co.allotment_id = a.id
+                      AND co.check_out_time <=
+                        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+                  )
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM allotments a
+                INNER JOIN check_ins ci
+                  ON ci.allotment_id = a.id
+                WHERE
+                  a.room_id = r.id
+                  AND a.bed_id IS NULL
+                  AND a.allotment_status = 'ALLOTTED'
+                  AND ci.check_in_time <=
+                    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM check_outs co
+                    WHERE
+                      co.allotment_id = a.id
+                      AND co.check_out_time <=
+                        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+                  )
               )
             )
         )::INTEGER AS occupied_beds,

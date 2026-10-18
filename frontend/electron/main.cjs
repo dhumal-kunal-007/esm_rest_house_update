@@ -272,6 +272,36 @@ ipcMain.handle("invoice:save-pdf", async (event, invoiceNumber) => {
   return { filePath: outputPath };
 });
 
+ipcMain.handle("bill:save-pdf", async (event, billNumber) => {
+  if (typeof billNumber !== "string" || !/^\d{8}$/.test(billNumber)) {
+    throw new Error("A valid bill number is required to save the bill PDF.");
+  }
+
+  const outputDirectory = "C:\\ESM_INVOICE";
+  let outputPath = path.join(outputDirectory, `${billNumber}.pdf`);
+  try {
+    await fs.access(outputPath);
+    outputPath = path.join(outputDirectory, "Fresh Start", `${billNumber}.pdf`);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const pdf = await event.sender.printToPDF({
+    printBackground: true,
+    preferCSSPageSize: true,
+  });
+
+  if (pdf.length < 1024 || pdf.subarray(0, 5).toString() !== "%PDF-") {
+    throw new Error("The bill PDF could not be generated.");
+  }
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, pdf);
+  return { filePath: outputPath };
+});
+
 ipcMain.handle("refund-memo:save-pdf", async (event, memoNumber) => {
   if (
     typeof memoNumber !== "string" ||

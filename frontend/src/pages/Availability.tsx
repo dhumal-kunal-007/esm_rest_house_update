@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "../App.css";
 import { apiFetch } from "../api";
 
 import type { AccommodationCategory, UserRole } from "../App";
 import type { BookingDraft } from "./Booking";
 import type { ExplicitAuthoritySelection } from "../AuthoritySelection";
+import type { GuestTypeValue } from "./GuestType";
 
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -78,6 +79,7 @@ export interface BedSelection {
   bedNumber: number;
   occupantName: string;
   guestId: string;
+  guestType?: GuestTypeValue;
 }
 
 interface AvailabilityProps {
@@ -140,11 +142,17 @@ const getCalendarDays = (month: Date): Date[] => {
 
 const isGuestAllowedByRoomGender = (
   room: Room,
-  gender: string | null | undefined
+  gender: string | null | undefined,
+  actualGender?: string | null
 ): boolean => {
   const restriction = normalize(room.genderRestriction || "ANY");
+  const normalizedGender = normalize(gender);
+  const effectiveGender =
+    normalizedGender === "MALE" || normalizedGender === "FEMALE"
+      ? normalizedGender
+      : normalize(actualGender);
   return restriction === "ANY" ||
-    restriction === normalize(gender);
+    restriction === effectiveGender;
 };
 
 const getRoomGenderLabel = (
@@ -285,6 +293,7 @@ function Availability({
   const [selectedBeds, setSelectedBeds] = useState<BedSelection[]>(
     initialSelections ?? []
   );
+  const assignmentSectionRef = useRef<HTMLElement | null>(null);
   const [detailsRoomId, setDetailsRoomId] =
     useState<string | null>(null);
   const [unavailableRoomId, setUnavailableRoomId] = useState<string | null>(
@@ -1052,6 +1061,28 @@ function Availability({
       : hasWholeRoomSelection
       ? "ROOM"
       : "NONE";
+  const hasIncompleteBedAssignment = selectedBeds.some((selection) => {
+    const room = databaseRooms.find(
+      (item) => item.id === selection.roomId
+    );
+    return (
+      !selection.guestId ||
+      !selection.occupantName ||
+      Boolean(room && isDmRoom(room) && !selection.guestType)
+    );
+  });
+
+  useEffect(() => {
+    if (
+      selectionMode === "BED" &&
+      selectedBeds.length === requiredGuests
+    ) {
+      assignmentSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [selectionMode, selectedBeds.length, requiredGuests]);
 
   /*
    * ==========================================
@@ -1249,7 +1280,13 @@ function Availability({
     if (!nextGuest) {
       return;
     }
-    if (!isGuestAllowedByRoomGender(room, nextGuest.gender)) {
+    if (
+      !isGuestAllowedByRoomGender(
+        room,
+        nextGuest.gender,
+        nextGuest.actualGender
+      )
+    ) {
       setRoomError(
         tr(
           `${room.name} is restricted to ${getRoomGenderLabel(room, false)}.`,
@@ -1297,7 +1334,11 @@ function Availability({
     if (
       guest &&
       room &&
-      !isGuestAllowedByRoomGender(room, guest.gender)
+      !isGuestAllowedByRoomGender(
+        room,
+        guest.gender,
+        guest.actualGender
+      )
     ) {
       setRoomError(
         tr(
@@ -1325,7 +1366,23 @@ function Availability({
               ...selection,
               guestId: guestId || "",
               occupantName: guest?.name || "",
+              ...(selection.guestId !== guestId
+                ? { guestType: undefined }
+                : {}),
             }
+          : selection
+      )
+    );
+  };
+
+  const assignGuestType = (
+    bedId: string,
+    guestType: GuestTypeValue | ""
+  ) => {
+    setSelectedBeds((current) =>
+      current.map((selection) =>
+        selection.bedId === bedId
+          ? { ...selection, guestType: guestType || undefined }
           : selection
       )
     );
@@ -1533,6 +1590,21 @@ function Availability({
       ) {
         return;
       }
+
+      if (
+        selectedBeds.some((selection) => {
+          const room = databaseRooms.find(
+            (item) => item.id === selection.roomId
+          );
+          return Boolean(
+            room &&
+            isDmRoom(room) &&
+            (!selection.guestId || !selection.guestType)
+          );
+        })
+      ) {
+        return;
+      }
     }
 
     const guestIds = selectedBeds.map(
@@ -1556,7 +1628,11 @@ function Availability({
         return Boolean(
           room &&
           guest &&
-          !isGuestAllowedByRoomGender(room, guest.gender)
+          !isGuestAllowedByRoomGender(
+            room,
+            guest.gender,
+            guest.actualGender
+          )
         );
       })
     ) {
@@ -2870,7 +2946,10 @@ function Availability({
       {booking &&
         selectionMode === "BED" &&
         selectedBeds.length > 0 && (
-          <section className="booking-card">
+          <section
+            className="booking-card"
+            ref={assignmentSectionRef}
+          >
             <div className="booking-section-title">
               <span>05</span>
 
@@ -2926,7 +3005,11 @@ function Availability({
                           (item) => item.id === bed.roomId
                         );
                         return !room ||
-                          isGuestAllowedByRoomGender(room, guest.gender);
+                          isGuestAllowedByRoomGender(
+                            room,
+                            guest.gender,
+                            guest.actualGender
+                          );
                       })
                       .map(
                       (guest, index) => (
@@ -2944,6 +3027,45 @@ function Availability({
                       )
                       )}
                   </select>
+
+                  {(() => {
+                  const room = databaseRooms.find(
+                    (item) => item.id === bed.roomId
+                  );
+                  return room && isDmRoom(room) ? (
+                    <>
+                      <label htmlFor={`dm-guest-type-${bed.bedId}`}>
+                        {tr("Guest type / rate", "अतिथी प्रकार / दर")}
+                      </label>
+                      <select
+                        id={`dm-guest-type-${bed.bedId}`}
+                        value={bed.guestType ?? ""}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          assignGuestType(
+                            bed.bedId,
+                            value === "ESM" ||
+                              value === "SERVING" ||
+                              value === "CIVILIAN"
+                              ? value
+                              : ""
+                          );
+                        }}
+                      >
+                        <option value="">
+                          {tr("Select guest type", "अतिथी प्रकार निवडा")}
+                        </option>
+                        <option value="ESM">ESM</option>
+                        <option value="SERVING">
+                          {tr("Serving", "सेवारत")}
+                        </option>
+                        <option value="CIVILIAN">
+                          {tr("Civilian", "नागरिक")}
+                        </option>
+                      </select>
+                    </>
+                  ) : null;
+                  })()}
                 </div>
               ))}
             </div>
@@ -3043,6 +3165,25 @@ function Availability({
                     "खोली किंवा बेड निवडा"
                   )}
             </strong>
+            {selectionMode === "BED" &&
+                  hasIncompleteBedAssignment && (
+                    <p role="status">
+                      {selectedBeds.some((selection) => {
+                        const room = databaseRooms.find(
+                          (item) => item.id === selection.roomId
+                        );
+                        return Boolean(room && isDmRoom(room));
+                      })
+                        ? tr(
+                            "Scroll to Assign Occupants: choose a guest and a Guest Type / rate for every DM bed.",
+                            "रहिवासी नियुक्त करा येथे स्क्रोल करा: प्रत्येक DM बेडसाठी अतिथी आणि अतिथी प्रकार / दर निवडा."
+                          )
+                        : tr(
+                            "Scroll to Assign Occupants and choose a guest for every bed.",
+                            "रहिवासी नियुक्त करा येथे स्क्रोल करून प्रत्येक बेडसाठी अतिथी निवडा."
+                          )}
+                    </p>
+                  )}
           </div>
 
           <div>
@@ -3071,7 +3212,8 @@ function Availability({
                     requiredGuests
                   : selectionMode === "BED"
                   ? selectedMatrixBeds.length !==
-                    requiredGuests
+                      requiredGuests ||
+                    hasIncompleteBedAssignment
                   : true
               }
               onClick={handleConfirm}

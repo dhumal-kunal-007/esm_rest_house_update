@@ -3,6 +3,9 @@ export type GuestType =
   | "SERVING"
   | "CIVILIAN";
 
+export const isGuestType = (value: unknown): value is GuestType =>
+  value === "ESM" || value === "SERVING" || value === "CIVILIAN";
+
 export type AccommodationCategory =
   | "AC"
   | "NON_AC"
@@ -35,6 +38,14 @@ export const guestTypeForDormitoryRelationship = (
   relationship.trim().toUpperCase() === "SELF"
     ? bookingGuestType
     : "CIVILIAN";
+
+export const resolveDormitoryGuestType = (
+  explicitGuestType: GuestType | null,
+  relationship: string,
+  bookingGuestType: GuestType
+): GuestType =>
+  explicitGuestType ??
+  guestTypeForDormitoryRelationship(relationship, bookingGuestType);
 
 export interface BookingPricingResult {
   guestType: GuestType;

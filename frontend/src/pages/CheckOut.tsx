@@ -56,6 +56,25 @@ interface CheckoutRecord {
   check_out_time: string;
 }
 
+interface PendingBill {
+  checkout_id: string;
+  booking_id: string;
+  guest_id: string;
+  allotment_id: string;
+  check_out_time: string;
+  booking_reference: string;
+  booking_person_name?: string | null;
+  guest_type?: RefundMemoGuestType | null;
+  guest_name: string;
+  mobile_number?: string | null;
+  room_id: string;
+  room_number: string;
+  bed_id?: string | null;
+  bed_number?: number | null;
+  check_in_date: string;
+  expected_check_out_date: string;
+}
+
 interface BillDetails {
   bill_date?: string;
   bill_number: string;
@@ -99,6 +118,32 @@ interface GeneratedBillResponse {
   bill?: BillDetails;
   details?: Partial<BillDetails>;
 }
+
+type LegacyRateCardRates = Partial<
+  Record<"ESM" | "SERVING" | "CIVILIAN", number | string | null>
+>;
+
+const isLegacyRateCardRates = (
+  value: unknown
+): value is LegacyRateCardRates => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+
+  return ["ESM", "SERVING", "CIVILIAN"].every((guestType) => {
+    const rate = Reflect.get(value, guestType);
+    return (
+      rate === undefined ||
+      rate === null ||
+      typeof rate === "number" ||
+      typeof rate === "string"
+    );
+  });
+};
 
 interface PaymentRecord {
   id: string;
@@ -185,6 +230,15 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   const billPreviewRef = useRef<HTMLDivElement>(null);
   const autoBillGenerationKey = useRef<string | null>(null);
+  const autoSavedBillNumber = useRef<string | null>(null);
+  const resumePendingBillId = useRef<string | null>(null);
+
+  const [billPdfStatus, setBillPdfStatus] = useState<{
+    billNumber: string;
+    filePath?: string;
+    error?: string;
+    saving: boolean;
+  } | null>(null);
 
   const [showBillSection, setShowBillSection] =
     useState(false);
@@ -194,6 +248,12 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   const [loadingGuests, setLoadingGuests] =
     useState(true);
+
+  const [pendingBills, setPendingBills] =
+    useState<PendingBill[]>([]);
+
+  const [loadingPendingBills, setLoadingPendingBills] =
+    useState(false);
 
   const [error, setError] =
     useState("");
@@ -206,6 +266,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
   const [legacyGuestType, setLegacyGuestType] =
     useState("ESM");
+
+  const [legacyRateCardRates, setLegacyRateCardRates] =
+    useState<LegacyRateCardRates>({});
 
   const [legacyAuthorizationReason, setLegacyAuthorizationReason] =
     useState("");
@@ -267,6 +330,46 @@ const CheckOut: React.FC<CheckOutProps> = ({
     }
   }, [generatedBill, showBillSection]);
 
+  const saveBillPdf = useCallback(async (billNumber: string) => {
+    setBillPdfStatus({ billNumber, saving: true });
+    try {
+      if (!window.electronAPI) {
+        throw new Error(
+          "Automatic bill PDF saving is available only in the ESM Rest House desktop app."
+        );
+      }
+      const result = await window.electronAPI.saveBillPdf(billNumber);
+      setBillPdfStatus({
+        billNumber,
+        filePath: result.filePath,
+        saving: false,
+      });
+    } catch (saveError) {
+      console.error("Automatic bill PDF save failed:", saveError);
+      setBillPdfStatus({
+        billNumber,
+        error:
+          saveError instanceof Error
+            ? saveError.message
+            : "Unable to save the bill PDF.",
+        saving: false,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !generatedBill ||
+      !showBillSection ||
+      autoSavedBillNumber.current === generatedBill.bill_number
+    ) {
+      return;
+    }
+
+    autoSavedBillNumber.current = generatedBill.bill_number;
+    void saveBillPdf(generatedBill.bill_number);
+  }, [generatedBill, saveBillPdf, showBillSection]);
+
   // ---------------------------------------------------------
   // COMMON RESPONSE HELPER
   // ---------------------------------------------------------
@@ -285,6 +388,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
       const requestError = new Error(errorDetail);
       Object.assign(requestError, {
         code: data?.code,
+        rateCardRates: data?.rate_card_rates,
       });
       throw requestError;
     }
@@ -343,8 +447,34 @@ const CheckOut: React.FC<CheckOutProps> = ({
     }
   };
 
+  const loadPendingBills = async () => {
+    if (userRole !== "ADMIN") {
+      setPendingBills([]);
+      return;
+    }
+
+    try {
+      setLoadingPendingBills(true);
+      const response = await apiFetch(
+        "http://localhost:5000/api/check-outs/pending-bills"
+      );
+      const data = await readJson(response);
+      setPendingBills(Array.isArray(data) ? data : []);
+    } catch (err: unknown) {
+      console.error("Load pending final bills error:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load pending final bills."
+      );
+    } finally {
+      setLoadingPendingBills(false);
+    }
+  };
+
   useEffect(() => {
-    loadEligibleGuests();
+    void loadEligibleGuests();
+    void loadPendingBills();
   }, []);
 
   const checkoutGroups = guests.reduce<EligibleGuest[]>((groups, guest) => {
@@ -459,6 +589,51 @@ const CheckOut: React.FC<CheckOutProps> = ({
     }
   };
 
+  const handleResumePendingBill = (pendingBill: PendingBill) => {
+    const guest: EligibleGuest = {
+      allotment_id: pendingBill.allotment_id,
+      booking_id: pendingBill.booking_id,
+      booking_reference: pendingBill.booking_reference,
+      guest_id: pendingBill.guest_id,
+      guest_name: pendingBill.guest_name,
+      booking_person_name: pendingBill.booking_person_name,
+      guest_type: pendingBill.guest_type,
+      mobile_number: pendingBill.mobile_number ?? undefined,
+      room_id: pendingBill.room_id,
+      room_number: pendingBill.room_number,
+      bed_id: pendingBill.bed_id,
+      bed_number: pendingBill.bed_number,
+      check_in_date: pendingBill.check_in_date,
+      expected_check_out_date: pendingBill.expected_check_out_date,
+      allotment_status: "ALLOTTED",
+      check_in_id: "",
+      check_in_time: "",
+      check_in_status: "CHECKED_IN",
+    };
+
+    resumePendingBillId.current = pendingBill.checkout_id;
+    setSelectedGuest(guest);
+    setCheckoutType("SCHEDULED");
+    setCompletedCheckout({
+      id: pendingBill.checkout_id,
+      booking_id: pendingBill.booking_id,
+      guest_id: pendingBill.guest_id,
+      allotment_id: pendingBill.allotment_id,
+      check_out_time: pendingBill.check_out_time,
+    });
+    setGeneratedBill(null);
+    setLegacyPricingRequired(false);
+    setLegacyDailyRate("");
+    setLegacyRateCardRates({});
+    setLegacyGuestType("ESM");
+    setLegacyAuthorizationReason("");
+    setConfirmLegacyRate(false);
+    setError("");
+    setSuccess(
+      `Resuming final bill for ${pendingBill.booking_reference}.`
+    );
+  };
+
   // ---------------------------------------------------------
   // SELECT GUEST
   // ---------------------------------------------------------
@@ -466,6 +641,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
   const handleSelectGuest = async (
     guest: EligibleGuest
   ) => {
+    resumePendingBillId.current = null;
     setSelectedGuest(guest);
 
     setCheckoutType(null);
@@ -476,6 +652,12 @@ const CheckOut: React.FC<CheckOutProps> = ({
     setCompletedCheckout(null);
     setGeneratedBill(null);
     setShowBillSection(false);
+    setLegacyPricingRequired(false);
+    setLegacyDailyRate("");
+    setLegacyRateCardRates({});
+    setLegacyGuestType("ESM");
+    setLegacyAuthorizationReason("");
+    setConfirmLegacyRate(false);
 
     setPayment(null);
     setRefund(null);
@@ -1089,6 +1271,12 @@ const CheckOut: React.FC<CheckOutProps> = ({
           ...data.details,
         }
       );
+      setPendingBills((current) =>
+        current.filter(
+          (pendingBill) =>
+            pendingBill.booking_id !== selectedGuest.booking_id
+        )
+      );
 
       setLegacyPricingRequired(false);
       setShowBillSection(
@@ -1104,18 +1292,37 @@ const CheckOut: React.FC<CheckOutProps> = ({
           ? "Pre Check-Out and final bill completed successfully."
           : "Check-Out and final bill completed successfully."
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "Bill generation error:",
         err
       );
 
-      if (err?.code === "LEGACY_PRICING_REQUIRED") {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        err.code === "LEGACY_PRICING_REQUIRED"
+      ) {
+        const rateCardRates =
+          "rateCardRates" in err &&
+          isLegacyRateCardRates(err.rateCardRates)
+            ? err.rateCardRates
+            : {};
+        const suggestedRate =
+          rateCardRates?.[
+            legacyGuestType as keyof LegacyRateCardRates
+          ];
+        setLegacyRateCardRates(rateCardRates ?? {});
+        setLegacyDailyRate(
+          suggestedRate === null || suggestedRate === undefined
+            ? ""
+            : String(suggestedRate)
+        );
         setLegacyPricingRequired(true);
         setError("");
       } else {
         setError(
-          err?.message ||
+          (err instanceof Error ? err.message : "") ||
             "Unable to generate final bill."
         );
       }
@@ -1129,11 +1336,35 @@ const CheckOut: React.FC<CheckOutProps> = ({
     legacyAuthorizationReason,
     legacyDailyRate,
     legacyGuestType,
+    legacyPricingRequired,
     otherRelationCount,
     readJson,
     selectedGuest,
+    setError,
+    setGeneratedBill,
+    setLegacyDailyRate,
+    setLegacyPricingRequired,
+    setLegacyRateCardRates,
+    setPendingBills,
+    setPreCheckoutStep,
+    setShowBillSection,
+    setSuccess,
     userId,
   ]);
+
+  useEffect(() => {
+    if (
+      !completedCheckout ||
+      !selectedGuest ||
+      loading ||
+      resumePendingBillId.current !== completedCheckout.id
+    ) {
+      return;
+    }
+
+    resumePendingBillId.current = null;
+    void generateBill(completedCheckout.id);
+  }, [completedCheckout, generateBill, loading, selectedGuest]);
 
   useEffect(() => {
     if (
@@ -1335,6 +1566,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
     setLegacyGuestType("ESM");
 
+    setLegacyRateCardRates({});
+
     setLegacyAuthorizationReason("");
 
     setConfirmLegacyRate(false);
@@ -1473,6 +1706,81 @@ const CheckOut: React.FC<CheckOutProps> = ({
           }}
         >
           {success}
+        </div>
+      )}
+
+      {!selectedGuest && userRole === "ADMIN" && (
+        <div
+          style={{
+            background: "#fff",
+            borderRadius: 18,
+            border: "1px solid #fbbf24",
+            padding: 26,
+            marginBottom: 22,
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.04)",
+          }}
+        >
+          <h2 style={{ marginTop: 0, fontSize: 21 }}>
+            Pending Final Bills
+          </h2>
+          <p style={{ color: "#64748b", marginBottom: 18 }}>
+            Completed check-outs without a generated bill can be resumed here.
+          </p>
+          {loadingPendingBills ? (
+            <p style={{ color: "#64748b" }}>Loading pending bills...</p>
+          ) : pendingBills.length === 0 ? (
+            <p style={{ color: "#64748b", marginBottom: 0 }}>
+              No pending final bills.
+            </p>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              {pendingBills.map((pendingBill) => (
+                <div
+                  key={pendingBill.checkout_id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 16,
+                    padding: 16,
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 12,
+                  }}
+                >
+                  <div>
+                    <strong>{pendingBill.booking_reference}</strong>
+                    <div style={{ marginTop: 4 }}>
+                      {pendingBill.guest_name} · {pendingBill.room_number}
+                      {pendingBill.bed_number
+                        ? ` · Bed ${pendingBill.bed_number}`
+                        : ""}
+                    </div>
+                    <small style={{ color: "#64748b" }}>
+                      Checked out:{" "}
+                      {new Date(pendingBill.check_out_time).toLocaleString(
+                        "en-IN"
+                      )}
+                    </small>
+                  </div>
+                  <button
+                    disabled={loading}
+                    onClick={() => handleResumePendingBill(pendingBill)}
+                    style={{
+                      padding: "10px 16px",
+                      border: "none",
+                      borderRadius: 8,
+                      background: "#1f4d36",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: loading ? "wait" : "pointer",
+                    }}
+                  >
+                    RESUME BILL
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2803,10 +3111,10 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       Historical rate required
                     </strong>
                     <p>
-                      This booking has no saved pricing snapshot. Do not
-                      estimate the rate or use today&apos;s rate. An ADMIN
-                      must enter the official rate and its authorization
-                      basis.
+                      This booking has no saved pricing snapshot. The
+                      configured rate-card values are shown for reference;
+                      an ADMIN must verify the applicable official tariff
+                      and confirm it before generating the bill.
                     </p>
                     {userRole === "ADMIN" ? (
                       <div
@@ -2823,9 +3131,10 @@ const CheckOut: React.FC<CheckOutProps> = ({
                             min="0.01"
                             step="0.01"
                             value={legacyDailyRate}
-                            onChange={(event) =>
-                              setLegacyDailyRate(event.target.value)
-                            }
+                            onChange={(event) => {
+                              setLegacyDailyRate(event.target.value);
+                              setConfirmLegacyRate(false);
+                            }}
                             style={{
                               display: "block",
                               width: "100%",
@@ -2838,9 +3147,21 @@ const CheckOut: React.FC<CheckOutProps> = ({
                           Guest type
                           <select
                             value={legacyGuestType}
-                            onChange={(event) =>
-                              setLegacyGuestType(event.target.value)
-                            }
+                            onChange={(event) => {
+                              const guestType = event.target.value;
+                              setLegacyGuestType(guestType);
+                              setConfirmLegacyRate(false);
+                              const suggestedRate =
+                                legacyRateCardRates[
+                                  guestType as keyof LegacyRateCardRates
+                                ];
+                              setLegacyDailyRate(
+                                suggestedRate === null ||
+                                suggestedRate === undefined
+                                  ? ""
+                                  : String(suggestedRate)
+                              );
+                            }}
                             style={{
                               display: "block",
                               width: "100%",
@@ -2853,6 +3174,26 @@ const CheckOut: React.FC<CheckOutProps> = ({
                             <option value="CIVILIAN">Civilian</option>
                           </select>
                         </label>
+                        <p
+                          style={{
+                            gridColumn: "1 / -1",
+                            margin: 0,
+                          }}
+                        >
+                          Current {legacyGuestType} rate card for this room:{" "}
+                          {legacyRateCardRates[
+                            legacyGuestType as keyof LegacyRateCardRates
+                          ] === null ||
+                          legacyRateCardRates[
+                            legacyGuestType as keyof LegacyRateCardRates
+                          ] === undefined
+                            ? "No rate configured"
+                            : `₹${Number(
+                                legacyRateCardRates[
+                                  legacyGuestType as keyof LegacyRateCardRates
+                                ]
+                              ).toFixed(2)} per day`}
+                        </p>
                         <label
                           style={{
                             gridColumn: "1 / -1",
@@ -2861,11 +3202,12 @@ const CheckOut: React.FC<CheckOutProps> = ({
                           Official tariff / authorization basis
                           <textarea
                             value={legacyAuthorizationReason}
-                            onChange={(event) =>
+                            onChange={(event) => {
                               setLegacyAuthorizationReason(
                                 event.target.value
-                              )
-                            }
+                              );
+                              setConfirmLegacyRate(false);
+                            }}
                             minLength={15}
                             maxLength={1000}
                             rows={3}
@@ -2955,6 +3297,29 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     PRINT / SAVE PDF
                   </button>
                 </div>
+                {billPdfStatus?.billNumber === generatedBill.bill_number && (
+                  <div
+                    role={billPdfStatus.error ? "alert" : "status"}
+                    aria-live="polite"
+                    style={{ marginBottom: 16 }}
+                  >
+                    {billPdfStatus.saving ? (
+                      <span>Automatically saving bill PDF...</span>
+                    ) : billPdfStatus.error ? (
+                      <>
+                        <span>Bill PDF was not saved: {billPdfStatus.error}</span>{" "}
+                        <button
+                          type="button"
+                          onClick={() => void saveBillPdf(generatedBill.bill_number)}
+                        >
+                          RETRY SAVE
+                        </button>
+                      </>
+                    ) : (
+                      <span>Bill PDF saved: {billPdfStatus.filePath}</span>
+                    )}
+                  </div>
+                )}
 
                 <article className="final-bill-printable">
                   <header className="final-bill-header">
