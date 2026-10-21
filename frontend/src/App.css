@@ -6088,6 +6088,34 @@
   margin-top: 18px;
 }
 
+.dashboard-pdf-directory {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #475569;
+  font-size: 12px;
+}
+
+.dashboard-pdf-path-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.dashboard-pdf-path-row:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-pdf-path-details {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #1e293b;
+  font-size: 12px;
+}
+
 .dashboard-payment-config-body {
   padding: 0 22px 20px;
 }
@@ -6912,6 +6940,10 @@
 
   .dashboard-payment-config-body {
     padding: 0 16px 16px;
+  }
+
+  .dashboard-pdf-path-row {
+    align-items: flex-start;
   }
 
   .dashboard-payment-config-fields {

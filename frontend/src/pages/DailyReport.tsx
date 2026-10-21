@@ -139,6 +139,7 @@ interface MonthlyPaymentPrintData {
   transactions: MonthlyPaymentTransaction[];
   total: number;
   monthLabel: string;
+  monthDate: string;
 }
 
 interface DailyReportProps {
@@ -253,7 +254,26 @@ function DailyReport({ user, onBack }: DailyReportProps) {
     if (!paymentPrint) return;
 
     const clearPaymentPrint = () => setPaymentPrint(null);
-    const printTimer = window.setTimeout(() => window.print(), 250);
+    const printTimer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          if (window.electronAPI) {
+            await window.electronAPI.savePrintablePdf(
+              "payment-transactions",
+              `${paymentPrint.monthDate}-${paymentPrint.method}-Transactions`
+            );
+          }
+        } catch (saveError) {
+          setError(
+            saveError instanceof Error
+              ? saveError.message
+              : "Unable to save the payment transactions PDF."
+          );
+        } finally {
+          window.print();
+        }
+      })();
+    }, 250);
     window.addEventListener("afterprint", clearPaymentPrint);
 
     return () => {
@@ -318,6 +338,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
         transactions: data.transactions ?? [],
         total: Number(data.total ?? 0),
         monthLabel: formatMonth(monthDate),
+        monthDate,
       });
     } catch (loadError) {
       setError(
@@ -356,6 +377,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
         transactions: data.transactions ?? [],
         total: Number(data.total ?? 0),
         monthLabel: formatMonth(month.monthStart),
+        monthDate: month.monthStart,
       });
     } catch (loadError) {
       setError(
@@ -525,6 +547,25 @@ function DailyReport({ user, onBack }: DailyReportProps) {
           ? "मासिक"
           : "वार्षिक";
 
+  const printReport = async () => {
+    try {
+      if (window.electronAPI) {
+        const fileName = reportType === "ANNUAL"
+          ? `Annual-Report-${financialYearStart}-${financialYearStart + 1}`
+          : `${reportType}-Report-${date}`;
+        await window.electronAPI.savePrintablePdf("reports", fileName);
+      }
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save the report PDF."
+      );
+    } finally {
+      window.print();
+    }
+  };
+
   return (
     <main
       className={`daily-report-screen${paymentPrint ? " daily-report-payment-print-active" : ""}`}
@@ -634,7 +675,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
           <button
             type="button"
             className="daily-report-primary"
-            onClick={() => window.print()}
+            onClick={() => void printReport()}
             disabled={(!report && !annualReport) || loading}
           >
             {language === "mr" ? "प्रिंट / PDF जतन करा" : "Print / Save as PDF"}

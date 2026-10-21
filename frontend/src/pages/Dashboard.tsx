@@ -189,6 +189,50 @@ function Dashboard({
   const [upiConfigSaving, setUpiConfigSaving] = useState(false);
   const [upiConfigMessage, setUpiConfigMessage] = useState("");
   const [upiConfigSaved, setUpiConfigSaved] = useState(false);
+  const [pdfSaveDirectories, setPdfSaveDirectories] = useState<
+    Record<
+      | "bills"
+      | "invoices"
+      | "refund-memos"
+      | "reports"
+      | "feedback"
+      | "booking-documents",
+      string | null
+    >
+  >({
+    bills: null,
+    invoices: null,
+    "refund-memos": null,
+    reports: null,
+    feedback: null,
+    "booking-documents": null,
+  });
+  const [pdfDirectoryLoading, setPdfDirectoryLoading] = useState(
+    () => Boolean(window.electronAPI)
+  );
+  const [pdfDirectorySaving, setPdfDirectorySaving] = useState<string | null>(null);
+  const [pdfDirectoryMessage, setPdfDirectoryMessage] = useState<
+    Partial<Record<
+      | "bills"
+      | "invoices"
+      | "refund-memos"
+      | "reports"
+      | "feedback"
+      | "booking-documents",
+      string
+    >>
+  >({});
+  const [pdfDirectorySaved, setPdfDirectorySaved] = useState<
+    Partial<Record<
+      | "bills"
+      | "invoices"
+      | "refund-memos"
+      | "reports"
+      | "feedback"
+      | "booking-documents",
+      boolean
+    >>
+  >({});
   const [deleteDialog, setDeleteDialog] = useState<{
     type: "confirm" | "error";
     title: string;
@@ -434,6 +478,86 @@ function Dashboard({
       cancelled = true;
     };
   }, [user.role]);
+
+  useEffect(() => {
+    if (user.role !== "ADMIN" || !window.electronAPI) {
+      return;
+    }
+
+    let cancelled = false;
+    void window.electronAPI
+      .getPdfSaveDirectories()
+      .then(({ directories }) => {
+        if (!cancelled) {
+          setPdfSaveDirectories(directories);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setPdfDirectoryMessage({
+            reports: error instanceof Error
+              ? error.message
+              : "Unable to load the PDF save folders.",
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPdfDirectoryLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user.role]);
+
+  const choosePdfSaveDirectory = async (
+    category:
+      | "bills"
+      | "invoices"
+      | "refund-memos"
+      | "reports"
+      | "feedback"
+      | "booking-documents"
+  ) => {
+    setPdfDirectorySaved((current) => ({ ...current, [category]: false }));
+    if (!window.electronAPI) {
+      setPdfDirectoryMessage((current) => ({
+        ...current,
+        [category]: "Choose a PDF folder from the installed desktop app.",
+      }));
+      return;
+    }
+
+    setPdfDirectorySaving(category);
+    setPdfDirectoryMessage((current) => ({ ...current, [category]: "" }));
+    try {
+      const result = await window.electronAPI.selectPdfSaveDirectory(category);
+      if (!result.canceled) {
+        setPdfSaveDirectories((current) => ({
+          ...current,
+          [category]: result.directory,
+        }));
+        setPdfDirectorySaved((current) => ({ ...current, [category]: true }));
+        setPdfDirectoryMessage((current) => ({
+          ...current,
+          [category]: language === "mr"
+            ? "PDF जतन करण्याचे फोल्डर अद्ययावत केले."
+            : "PDF save folder updated.",
+        }));
+      }
+    } catch (error) {
+      setPdfDirectoryMessage((current) => ({
+        ...current,
+        [category]: error instanceof Error
+          ? error.message
+          : "Unable to update the PDF save folder.",
+      }));
+    } finally {
+      setPdfDirectorySaving(null);
+    }
+  };
 
   const saveUpiConfiguration = async () => {
     setUpiConfigSaving(true);
@@ -1679,6 +1803,105 @@ function Dashboard({
                     </div>
                   </>
                 )}
+              </div>
+            </section>
+          )}
+
+          {user.role === "ADMIN" && (
+            <section className="dashboard-section-card dashboard-payment-config">
+              <div className="dashboard-section-header">
+                <div>
+                  <span className="dashboard-eyebrow">
+                    {language === "mr" ? "PDF दस्तऐवज" : "PDF DOCUMENTS"}
+                  </span>
+                  <h3>
+                    {language === "mr"
+                      ? "दस्तऐवजानुसार PDF फोल्डर"
+                      : "PDF Folders by Document"}
+                  </h3>
+                  <p>
+                    {language === "mr"
+                      ? "प्रत्येक प्रकारच्या PDF साठी स्वतंत्र folder निवडा. हे पर्याय फक्त Admin ला उपलब्ध आहेत."
+                      : "Choose a separate folder for each PDF type. These settings are available to Admin only."}
+                  </p>
+                </div>
+              </div>
+              <div className="dashboard-payment-config-body">
+                {([
+                  {
+                    category: "invoices",
+                    title: language === "mr" ? "इनव्हॉइस" : "Invoice",
+                  },
+                  {
+                    category: "reports",
+                    title: language === "mr"
+                      ? "अहवाल — दैनिक / साप्ताहिक / मासिक / वार्षिक"
+                      : "Reports — Daily / Weekly / Monthly / Annual",
+                  },
+                  {
+                    category: "bills",
+                    title: language === "mr" ? "अंतिम चेकआउट बिल" : "Final Checkout Bill",
+                  },
+                  {
+                    category: "refund-memos",
+                    title: language === "mr" ? "रिफंड मेमो" : "Refund Memo",
+                  },
+                  {
+                    category: "feedback",
+                    title: language === "mr" ? "चेकआउट फीडबॅक" : "Checkout Feedback",
+                  },
+                  {
+                    category: "booking-documents",
+                    title: language === "mr"
+                      ? "बुकिंग व्यक्ती आणि रहिवाशांची कागदपत्रे"
+                      : "Booking Person & Occupant Documents",
+                  },
+                ] as const).map(({ category, title }) => (
+                  <div className="dashboard-pdf-path-row" key={category}>
+                    <div className="dashboard-pdf-path-details">
+                      <strong>{title}</strong>
+                      <p className="dashboard-pdf-directory" role="status">
+                        {pdfDirectoryLoading
+                          ? language === "mr"
+                            ? "फोल्डर तपासत आहे..."
+                            : "Loading folder..."
+                          : pdfSaveDirectories[category] ||
+                            (language === "mr"
+                              ? "Default folder वापरले जाईल."
+                              : "Default folder will be used.")}
+                      </p>
+                      {pdfDirectoryMessage[category] && (
+                        <p
+                          role="status"
+                          className={
+                            pdfDirectorySaved[category]
+                              ? "dashboard-payment-message success"
+                              : "dashboard-payment-message"
+                          }
+                        >
+                          {pdfDirectoryMessage[category]}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="dashboard-payment-save"
+                      onClick={() => void choosePdfSaveDirectory(category)}
+                      disabled={
+                        pdfDirectoryLoading ||
+                        pdfDirectorySaving !== null
+                      }
+                    >
+                      {pdfDirectorySaving === category
+                        ? language === "mr"
+                          ? "जतन होत आहे..."
+                          : "Saving..."
+                        : language === "mr"
+                          ? "Path निवडा"
+                          : "Set Path"}
+                    </button>
+                  </div>
+                ))}
               </div>
             </section>
           )}

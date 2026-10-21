@@ -331,6 +331,8 @@ function CreateUser({
 
   useEffect(() => {
 
+    // This effect starts the initial async API load.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadUsers();
 
   }, []);
@@ -346,6 +348,8 @@ function CreateUser({
       users.length > 0
     ) {
 
+      // Preserve local edits while initializing from the latest parent data.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDatabaseUsers(
         (currentUsers) => {
 

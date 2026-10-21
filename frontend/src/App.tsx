@@ -1235,6 +1235,61 @@ function AppContent() {
 
       };
 
+      let localDocumentSaveError: string | null = null;
+      const bookingDocuments = [
+        ...(bookingWithIds.serviceman.document
+          ? [{
+              personType: "BOOKING_PERSON" as const,
+              personName: bookingWithIds.serviceman.name,
+              documentIndex: 0,
+              file: bookingWithIds.serviceman.document,
+            }]
+          : []),
+        ...bookingWithIds.guests.flatMap((guest, index) =>
+          guest.document
+            ? [{
+                personType: "OCCUPANT" as const,
+                personName: guest.name,
+                documentIndex: index + 1,
+                file: guest.document,
+              }]
+            : []
+        ),
+      ];
+      if (bookingDocuments.length > 0) {
+        try {
+          if (!window.electronAPI?.saveBookingDocuments) {
+            throw new Error(
+              "Local document copies can only be saved from the desktop app."
+            );
+          }
+          const localDocuments = await Promise.all(
+            bookingDocuments.map(async ({
+              personType,
+              personName,
+              documentIndex,
+              file,
+            }) => ({
+              personType,
+              personName,
+              documentIndex,
+              mimeType: file.type,
+              content: new Uint8Array(await file.arrayBuffer()),
+            }))
+          );
+          await window.electronAPI.saveBookingDocuments(
+            data.booking?.booking_reference ?? String(bookingId),
+            localDocuments
+          );
+        } catch (error) {
+          console.error("Unable to save booking documents locally:", error);
+          localDocumentSaveError =
+            error instanceof Error
+              ? error.message
+              : "Unable to save booking documents locally.";
+        }
+      }
+
       const retainedSelections =
         workflow.availabilitySelections
           .filter((selection) =>
@@ -1284,7 +1339,19 @@ function AppContent() {
         );
       }
 
-      if (!bookingToSave.id) {
+      if (localDocumentSaveError) {
+        setModal({
+          type: "error",
+          title:
+            language === "mr"
+              ? "स्थानिक कागदपत्र प्रत जतन झाली नाही"
+              : "Local Document Copy Not Saved",
+          message:
+            language === "mr"
+              ? `बुकिंग आणि एन्क्रिप्टेड सर्व्हर प्रत जतन झाली आहे, परंतु स्थानिक प्रत जतन करता आली नाही: ${localDocumentSaveError}`
+              : `The booking and encrypted server copy were saved, but the local copy could not be saved: ${localDocumentSaveError}`,
+        });
+      } else if (!bookingToSave.id) {
         setModal({
           type: "success",
           title:

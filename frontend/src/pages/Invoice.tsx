@@ -221,6 +221,9 @@ function Invoice({
 
   const [savingInvoicePdf, setSavingInvoicePdf] = useState(false);
   const [invoicePdfError, setInvoicePdfError] = useState("");
+  const [savedInvoiceNumber, setSavedInvoiceNumber] = useState<string | null>(
+    null
+  );
 
   /* =================================
      TRANSLATION
@@ -249,6 +252,44 @@ function Invoice({
       : tr("Credit Memo", "क्रेडिट मेमो");
 
   if (generatedInvoice) {
+    const saveInvoicePdf = async () => {
+      if (!window.electronAPI) {
+        throw new Error(
+          "Invoice auto-save is available only in the ESM Rest House desktop app."
+        );
+      }
+      await window.electronAPI.saveInvoicePdf(
+        generatedInvoice.invoiceNumber
+      );
+      setSavedInvoiceNumber(generatedInvoice.invoiceNumber);
+    };
+
+    const printInvoice = async () => {
+      setInvoicePdfError("");
+      if (
+        !window.electronAPI ||
+        savedInvoiceNumber === generatedInvoice.invoiceNumber
+      ) {
+        window.print();
+        return;
+      }
+
+      setSavingInvoicePdf(true);
+      try {
+        await saveInvoicePdf();
+      } catch (error) {
+        console.error("Invoice PDF auto-save failed:", error);
+        setInvoicePdfError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save the invoice PDF."
+        );
+      } finally {
+        setSavingInvoicePdf(false);
+        window.print();
+      }
+    };
+
     const renderInvoiceCopy = (copyType: "GUEST" | "ESM") => (
       <section
         className={`invoice-copy invoice-copy-${copyType.toLowerCase()}`}
@@ -435,7 +476,8 @@ function Invoice({
             <button
               type="button"
               className="secondary-action invoice-screen-only"
-              onClick={() => window.print()}
+              disabled={savingInvoicePdf}
+              onClick={() => void printInvoice()}
             >
               {tr("PRINT / SAVE PDF", "प्रिंट / PDF सेव्ह करा")}
             </button>
@@ -447,14 +489,9 @@ function Invoice({
                 setSavingInvoicePdf(true);
                 setInvoicePdfError("");
                 try {
-                  if (!window.electronAPI) {
-                    throw new Error(
-                      "Invoice auto-save is available only in the ESM Rest House desktop app."
-                    );
+                  if (savedInvoiceNumber !== generatedInvoice.invoiceNumber) {
+                    await saveInvoicePdf();
                   }
-                  await window.electronAPI.saveInvoicePdf(
-                    generatedInvoice.invoiceNumber
-                  );
                   onContinueToRoomLock();
                 } catch (error) {
                   console.error("Invoice PDF auto-save failed:", error);

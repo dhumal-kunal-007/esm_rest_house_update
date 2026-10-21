@@ -310,6 +310,8 @@ function CheckIn({
   ========================================= */
 
   useEffect(() => {
+    // This effect starts the initial async API load.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadGuests();
   }, []);
 

@@ -263,7 +263,7 @@ function RefundMemo({
     });
   };
 
-  const handleSavePdf = async () => {
+  const handleSavePdf = async (): Promise<boolean> => {
     setSavingPdf(true);
     setPdfSaveError("");
     try {
@@ -273,6 +273,7 @@ function RefundMemo({
         );
       }
       await window.electronAPI.saveRefundMemoPdf(memoNumber);
+      return true;
     } catch (error) {
       console.error("Refund memo PDF save failed:", error);
       setPdfSaveError(
@@ -280,6 +281,7 @@ function RefundMemo({
           ? error.message
           : "Unable to save the refund memo PDF."
       );
+      return false;
     } finally {
       setSavingPdf(false);
     }
@@ -455,10 +457,14 @@ function RefundMemo({
   ========================================= */
 
   const handleContinue =
-    () => {
+    async () => {
       if (
         !validateMemo()
       ) {
+        return;
+      }
+
+      if (window.electronAPI && !(await handleSavePdf())) {
         return;
       }
 

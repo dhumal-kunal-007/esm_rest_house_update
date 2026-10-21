@@ -258,7 +258,6 @@ const getRoomGroup = (
 };
 
 function Availability({
-  category: _category,
   role,
   booking,
   authoritySelection,
@@ -530,37 +529,17 @@ function Availability({
                       bed_number: number;
                       bed_status: string;
                     }) => {
-                      let status: BedStatus = "out";
-
-                      switch (normalize(bed.bed_status)) {
-                        case "AVAILABLE":
-                          status = "available";
-                          break;
-
-                        case "RESERVED":
-                          status = "reserved";
-                          break;
-
-                        case "OCCUPIED":
-                          status = "occupied";
-                          break;
-
-                        case "BOOKED":
-                          status = "booked";
-                          break;
-
-                        case "NEEDS_CLEANING":
-                          status = "needs_cleaning";
-                          break;
-
-                        case "CLEANING":
-                        case "HOUSEKEEPING_CLEANING":
-                          status = "cleaning";
-                          break;
-
-                        default:
-                          status = "out";
-                      }
+                      const statusByApiValue: Record<string, BedStatus> = {
+                        AVAILABLE: "available",
+                        RESERVED: "reserved",
+                        OCCUPIED: "occupied",
+                        BOOKED: "booked",
+                        NEEDS_CLEANING: "needs_cleaning",
+                        CLEANING: "cleaning",
+                        HOUSEKEEPING_CLEANING: "cleaning",
+                      };
+                      const status =
+                        statusByApiValue[normalize(bed.bed_status)] ?? "out";
 
                       return {
                         id: bed.id,
@@ -1425,6 +1404,8 @@ function Availability({
     );
 
     if (!lockedRoom) {
+      // Report invalid external selection state from this synchronization effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRoomError(
         tr(
           `The selected authority room ${authoritySelection.roomNumber} could not be loaded.`,

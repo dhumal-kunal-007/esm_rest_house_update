@@ -219,6 +219,8 @@ function Login({
 
     if (savedRemember === "true") {
 
+      // Initialize persisted login preference when the page first opens.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRememberLogin(true);
 
     }

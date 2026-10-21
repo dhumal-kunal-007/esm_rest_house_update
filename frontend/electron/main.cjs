@@ -242,12 +242,278 @@ function configureAutoUpdates() {
   }, 5000);
 }
 
+const pdfCategories = {
+  bills: "Bills",
+  invoices: "Invoices",
+  "refund-memos": "Refund Memos",
+  reports: "Reports",
+  "payment-transactions": "Reports",
+  feedback: "Feedback",
+  "booking-documents": "Booking Documents",
+};
+
+async function readPdfSaveSettings() {
+  const settingsPath = path.join(
+    app.getPath("userData"),
+    "pdf-save-settings.json"
+  );
+  try {
+    const settings = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    return settings && typeof settings === "object" ? settings : {};
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {};
+    }
+    throw new Error(`Unable to read PDF save settings: ${error.message}`);
+  }
+}
+
+async function getPdfSaveDirectory(category, defaultDirectory) {
+  const settings = await readPdfSaveSettings();
+  const directory = settings.directories?.[category];
+
+  if (
+    directory !== undefined &&
+    (typeof directory !== "string" || !path.isAbsolute(directory))
+  ) {
+    throw new Error(
+      `The saved ${category} PDF folder is invalid. Choose the folder again.`
+    );
+  }
+
+  return directory || defaultDirectory;
+}
+
+async function createPdf(event, outputPath, description) {
+  const pdf = await event.sender.printToPDF({
+    printBackground: true,
+    preferCSSPageSize: true,
+  });
+
+  if (pdf.length < 1024 || pdf.subarray(0, 5).toString() !== "%PDF-") {
+    throw new Error(`The ${description} PDF could not be generated.`);
+  }
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, pdf);
+  return { filePath: outputPath };
+}
+
+function sanitizePdfFileName(fileName) {
+  const sanitized = fileName
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  if (!sanitized || sanitized === "." || sanitized === "..") {
+    throw new Error("A valid PDF file name is required.");
+  }
+  return sanitized;
+}
+
+ipcMain.handle("pdf:get-save-directories", async () => {
+  const settings = await readPdfSaveSettings();
+  const directories = {};
+  for (const category of Object.keys(pdfCategories)) {
+    const directory = settings.directories?.[category];
+    if (
+      directory !== undefined &&
+      (typeof directory !== "string" || !path.isAbsolute(directory))
+    ) {
+      throw new Error(`The saved ${category} PDF folder is invalid.`);
+    }
+    directories[category] = directory || null;
+  }
+  return { directories };
+});
+
+ipcMain.handle("pdf:select-save-directory", async (_event, category) => {
+  if (!Object.hasOwn(pdfCategories, category)) {
+    throw new Error("A supported PDF save folder category is required.");
+  }
+  const settingsPath = path.join(
+    app.getPath("userData"),
+    "pdf-save-settings.json"
+  );
+  const settings = await readPdfSaveSettings();
+  const currentDirectory = settings.directories?.[category];
+
+  const selection = await dialog.showOpenDialog({
+    title: `Choose the ${pdfCategories[category]} PDF folder`,
+    buttonLabel: "Use this folder",
+    properties: ["openDirectory", "createDirectory"],
+    ...(currentDirectory ? { defaultPath: currentDirectory } : {}),
+  });
+  if (selection.canceled || selection.filePaths.length === 0) {
+    return { canceled: true, directory: currentDirectory || null };
+  }
+
+  const directory = selection.filePaths[0];
+  await fs.mkdir(directory, { recursive: true });
+  await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+  settings.directories = {
+    ...settings.directories,
+    [category]: directory,
+  };
+  await fs.writeFile(
+    settingsPath,
+    JSON.stringify(settings, null, 2),
+    "utf8"
+  );
+  return { canceled: false, directory };
+});
+
+ipcMain.handle("pdf:save-printable", async (event, category, fileName) => {
+  if (!Object.hasOwn(pdfCategories, category)) {
+    throw new Error("A supported printable document category is required.");
+  }
+  if (
+    typeof fileName !== "string" ||
+    fileName.length > 180 ||
+    !/^[\w .()-]+$/.test(fileName)
+  ) {
+    throw new Error("A valid PDF file name is required.");
+  }
+
+  const defaultDirectories = {
+    bills: "C:\\ESM_INVOICE",
+    invoices: "C:\\ESM_INVOICE",
+    "refund-memos": "C:\\ESM_REFUND",
+    reports: path.join(app.getPath("documents"), "ESM Rest House", "Reports"),
+    "booking-documents": path.join(
+      app.getPath("documents"),
+      "ESM Rest House",
+      "Booking Documents"
+    ),
+    "payment-transactions": path.join(
+      app.getPath("documents"),
+      "ESM Rest House",
+      "Reports"
+    ),
+    feedback: path.join(app.getPath("documents"), "ESM Rest House", "Feedback"),
+  };
+  const settingsCategory =
+    category === "payment-transactions" ? "reports" : category;
+  const outputDirectory = await getPdfSaveDirectory(
+    settingsCategory,
+    defaultDirectories[category]
+  );
+  const safeFileName = sanitizePdfFileName(fileName);
+  let outputPath = path.join(outputDirectory, `${safeFileName}.pdf`);
+  let suffix = 2;
+  while (true) {
+    try {
+      await fs.access(outputPath);
+      outputPath = path.join(
+        outputDirectory,
+        `${safeFileName} (${suffix}).pdf`
+      );
+      suffix += 1;
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+      break;
+    }
+  }
+
+  return createPdf(event, outputPath, "printable document");
+});
+
+ipcMain.handle(
+  "booking-documents:save-local",
+  async (_event, bookingReference, documents) => {
+    if (
+      typeof bookingReference !== "string" ||
+      !/^[A-Z0-9_-]{1,80}$/i.test(bookingReference)
+    ) {
+      throw new Error("A valid booking reference is required to save documents.");
+    }
+    if (
+      !Array.isArray(documents) ||
+      documents.length < 1 ||
+      documents.length > 11
+    ) {
+      throw new Error("Between 1 and 11 booking documents are required.");
+    }
+
+    const outputRoot = await getPdfSaveDirectory(
+      "booking-documents",
+      path.join(
+        app.getPath("documents"),
+        "ESM Rest House",
+        "Booking Documents"
+      )
+    );
+    const bookingDirectory = path.join(
+      outputRoot,
+      sanitizePdfFileName(bookingReference)
+    );
+    await fs.mkdir(bookingDirectory, { recursive: true });
+
+    const savedFiles = [];
+    for (const document of documents) {
+      if (
+        !document ||
+        !["BOOKING_PERSON", "OCCUPANT"].includes(document.personType) ||
+        typeof document.personName !== "string" ||
+        typeof document.mimeType !== "string" ||
+        !(document.content instanceof Uint8Array) ||
+        document.content.byteLength < 1 ||
+        document.content.byteLength > 5 * 1024 * 1024
+      ) {
+        throw new Error("A booking document is invalid or exceeds the 5 MB limit.");
+      }
+
+      const extensions = {
+        "application/pdf": "pdf",
+        "image/jpeg": "jpg",
+        "image/png": "png",
+      };
+      const extension = extensions[document.mimeType];
+      if (!extension) {
+        throw new Error("Only PDF, JPEG, and PNG documents can be saved.");
+      }
+      if (
+        document.personType === "BOOKING_PERSON" &&
+        document.documentIndex !== 0
+      ) {
+        throw new Error("The booking person's document index is invalid.");
+      }
+      if (
+        document.personType === "OCCUPANT" &&
+        (!Number.isInteger(document.documentIndex) ||
+          document.documentIndex < 1 ||
+          document.documentIndex > 10)
+      ) {
+        throw new Error("An occupant document index is invalid.");
+      }
+
+      const prefix =
+        document.personType === "BOOKING_PERSON"
+          ? "Booking Person"
+          : `Occupant ${String(document.documentIndex).padStart(2, "0")}`;
+      const personName = sanitizePdfFileName(document.personName).slice(0, 80);
+      const outputPath = path.join(
+        bookingDirectory,
+        `${prefix} - ${personName}.${extension}`
+      );
+      await fs.writeFile(outputPath, Buffer.from(document.content));
+      savedFiles.push(outputPath);
+    }
+
+    return { directory: bookingDirectory, files: savedFiles };
+  }
+);
+
 ipcMain.handle("invoice:save-pdf", async (event, invoiceNumber) => {
   if (typeof invoiceNumber !== "string" || !/^\d{8}$/.test(invoiceNumber)) {
     throw new Error("A valid invoice number is required to save the invoice PDF.");
   }
 
-  const outputDirectory = "C:\\ESM_INVOICE";
+  const outputDirectory = await getPdfSaveDirectory(
+    "invoices",
+    "C:\\ESM_INVOICE"
+  );
   let outputPath = path.join(outputDirectory, `${invoiceNumber}.pdf`);
   try {
     await fs.access(outputPath);
@@ -258,18 +524,7 @@ ipcMain.handle("invoice:save-pdf", async (event, invoiceNumber) => {
     }
   }
 
-  const pdf = await event.sender.printToPDF({
-    printBackground: true,
-    preferCSSPageSize: true,
-  });
-
-  if (pdf.length < 1024 || pdf.subarray(0, 5).toString() !== "%PDF-") {
-    throw new Error("The invoice PDF could not be generated.");
-  }
-
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, pdf);
-  return { filePath: outputPath };
+  return createPdf(event, outputPath, "invoice");
 });
 
 ipcMain.handle("bill:save-pdf", async (event, billNumber) => {
@@ -277,7 +532,10 @@ ipcMain.handle("bill:save-pdf", async (event, billNumber) => {
     throw new Error("A valid bill number is required to save the bill PDF.");
   }
 
-  const outputDirectory = "C:\\ESM_INVOICE";
+  const outputDirectory = await getPdfSaveDirectory(
+    "bills",
+    "C:\\ESM_INVOICE"
+  );
   let outputPath = path.join(outputDirectory, `${billNumber}.pdf`);
   try {
     await fs.access(outputPath);
@@ -288,18 +546,7 @@ ipcMain.handle("bill:save-pdf", async (event, billNumber) => {
     }
   }
 
-  const pdf = await event.sender.printToPDF({
-    printBackground: true,
-    preferCSSPageSize: true,
-  });
-
-  if (pdf.length < 1024 || pdf.subarray(0, 5).toString() !== "%PDF-") {
-    throw new Error("The bill PDF could not be generated.");
-  }
-
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, pdf);
-  return { filePath: outputPath };
+  return createPdf(event, outputPath, "bill");
 });
 
 ipcMain.handle("refund-memo:save-pdf", async (event, memoNumber) => {
@@ -310,20 +557,12 @@ ipcMain.handle("refund-memo:save-pdf", async (event, memoNumber) => {
     throw new Error("A valid refund memo number is required to save the PDF.");
   }
 
-  const outputDirectory = "C:\\ESM_REFUND";
+  const outputDirectory = await getPdfSaveDirectory(
+    "refund-memos",
+    "C:\\ESM_REFUND"
+  );
   const outputPath = path.join(outputDirectory, `${memoNumber}.pdf`);
-  const pdf = await event.sender.printToPDF({
-    printBackground: true,
-    preferCSSPageSize: true,
-  });
-
-  if (pdf.length < 1024 || pdf.subarray(0, 5).toString() !== "%PDF-") {
-    throw new Error("The refund memo PDF could not be generated.");
-  }
-
-  await fs.mkdir(outputDirectory, { recursive: true });
-  await fs.writeFile(outputPath, pdf);
-  return { filePath: outputPath };
+  return createPdf(event, outputPath, "refund memo");
 });
 
 async function createWindow() {

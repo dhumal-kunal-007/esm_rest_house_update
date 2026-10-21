@@ -226,7 +226,6 @@ function Booking({
   category,
   initialBooking,
   officerName,
-  userId: _userId,
   onBack,
   onContinue,
 }: BookingProps) {

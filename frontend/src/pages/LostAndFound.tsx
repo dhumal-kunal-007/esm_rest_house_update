@@ -457,18 +457,21 @@ const LostAndFound: React.FC<
       const normalizedRooms: Room[] =
         roomList
           .map(
-            (room: any) => ({
-              id:
-                room?.id ??
-                room?.room_id ??
-                "",
-
-              room_number:
-                room?.room_number ??
-                room?.roomNumber ??
-                room?.room_name ??
-                "",
-            })
+            (room: unknown) => {
+              if (!room || typeof room !== "object") {
+                return { id: "", room_number: "" };
+              }
+              const roomRecord = room as Record<string, unknown>;
+              return {
+                id: String(roomRecord.id ?? roomRecord.room_id ?? ""),
+                room_number: String(
+                  roomRecord.room_number ??
+                    roomRecord.roomNumber ??
+                    roomRecord.room_name ??
+                    ""
+                ),
+              };
+            }
           )
           .filter(
             (room) =>
@@ -515,6 +518,8 @@ const LostAndFound: React.FC<
 
   useEffect(() => {
 
+    // These calls initiate async API loads; state updates follow their responses.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadItems();
     loadRooms();
 

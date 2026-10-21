@@ -145,6 +145,29 @@ const isLegacyRateCardRates = (
   });
 };
 
+const getErrorMessage = (
+  error: unknown,
+  fallback: string
+): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+  return fallback;
+};
+
+const isApiRecord = (
+  value: unknown
+): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 interface PaymentRecord {
   id: string;
   amount: number;
@@ -330,7 +353,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
     }
   }, [generatedBill, showBillSection]);
 
-  const saveBillPdf = useCallback(async (billNumber: string) => {
+  const saveBillPdf = useCallback(async (billNumber: string): Promise<boolean> => {
     setBillPdfStatus({ billNumber, saving: true });
     try {
       if (!window.electronAPI) {
@@ -344,6 +367,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
         filePath: result.filePath,
         saving: false,
       });
+      return true;
     } catch (saveError) {
       console.error("Automatic bill PDF save failed:", saveError);
       setBillPdfStatus({
@@ -354,6 +378,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
             : "Unable to save the bill PDF.",
         saving: false,
       });
+      return false;
     }
   }, []);
 
@@ -432,16 +457,13 @@ const CheckOut: React.FC<CheckOutProps> = ({
           : [];
 
       setGuests(guestList);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "Load checkout guests error:",
         err
       );
 
-      setError(
-        err?.message ||
-          "Unable to load checked-in guests."
-      );
+      setError(getErrorMessage(err, "Unable to load checked-in guests."));
     } finally {
       setLoadingGuests(false);
     }
@@ -473,6 +495,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
   };
 
   useEffect(() => {
+    // These effects start the initial async API loads.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadEligibleGuests();
     void loadPendingBills();
   }, []);
@@ -521,7 +545,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
        * or directly [...]
        */
 
-      const paymentList =
+      const paymentList: unknown[] =
         Array.isArray(data)
           ? data
           : Array.isArray(data?.payments)
@@ -545,28 +569,33 @@ const CheckOut: React.FC<CheckOutProps> = ({
       ];
 
       const successfulPayment =
-        paymentList.find(
-          (item: any) =>
+        paymentList.filter(isApiRecord).find(
+          (item) =>
             successfulStatuses.includes(
               String(
-                item.payment_status ||
-                  ""
+                item.payment_status ?? ""
               ).toUpperCase()
             )
-        ) || paymentList[0];
+        ) || paymentList.find(isApiRecord);
+
+      if (!successfulPayment) {
+        throw new Error("The payment response did not contain valid payment details.");
+      }
 
       const normalizedPayment: PaymentRecord =
         {
-          id: successfulPayment.id,
+          id: String(successfulPayment.id ?? ""),
           amount: Number(
-            successfulPayment.amount || 0
+            successfulPayment.amount ?? 0
           ),
-          payment_status:
-            successfulPayment.payment_status,
-          payment_method:
-            successfulPayment.payment_method,
+          payment_status: String(successfulPayment.payment_status ?? ""),
+          payment_method: typeof successfulPayment.payment_method === "string"
+            ? successfulPayment.payment_method
+            : undefined,
           transaction_number:
-            successfulPayment.transaction_number,
+            typeof successfulPayment.transaction_number === "string"
+              ? successfulPayment.transaction_number
+              : undefined,
         };
 
       setPayment(
@@ -574,7 +603,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
       );
 
       return normalizedPayment;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "Load booking payment error:",
         err
@@ -583,8 +612,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
       setPayment(null);
 
       throw new Error(
-        err?.message ||
-          "Unable to load booking payment."
+        getErrorMessage(err, "Unable to load booking payment."),
+        { cause: err }
       );
     }
   };
@@ -680,11 +709,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
       await loadPaymentForBooking(
         guest.booking_id
       );
-    } catch (err: any) {
-      setError(
-        err?.message ||
-          "Unable to load payment details."
-      );
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Unable to load payment details."));
     } finally {
       setLoading(false);
     }
@@ -909,16 +935,13 @@ const CheckOut: React.FC<CheckOutProps> = ({
       setPreCheckoutStep(
         "REFUND_MEMO"
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "Refund calculation error:",
         err
       );
 
-      setError(
-        err?.message ||
-          "Unable to calculate refund."
-      );
+      setError(getErrorMessage(err, "Unable to calculate refund."));
     } finally {
       setLoading(false);
     }
@@ -993,16 +1016,13 @@ const CheckOut: React.FC<CheckOutProps> = ({
       );
 
       await openFinalCheckoutFeedback();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "Refund memo error:",
         err
       );
 
-      setError(
-        err?.message ||
-          "Unable to create refund memo."
-      );
+      setError(getErrorMessage(err, "Unable to create refund memo."));
     } finally {
       setLoading(false);
     }
@@ -1172,24 +1192,21 @@ const CheckOut: React.FC<CheckOutProps> = ({
       await generateBill(
         checkout.id
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "Checkout error:",
         err
       );
 
       if (
-        err?.message ===
+        err instanceof Error && err.message ===
         "Complete or skip the booking feedback form before the final guest checkout."
       ) {
         await openFinalCheckoutFeedback();
         return;
       }
 
-      setError(
-        err?.message ||
-          "Unable to complete Check-Out."
-      );
+      setError(getErrorMessage(err, "Unable to complete Check-Out."));
     } finally {
       setLoading(false);
     }
@@ -1495,15 +1512,14 @@ const CheckOut: React.FC<CheckOutProps> = ({
           "WhatsApp feedback notification created."
         );
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(
         "WhatsApp feedback error:",
         err
       );
 
       setError(
-        err?.message ||
-          "Unable to create WhatsApp feedback notification."
+        getErrorMessage(err, "Unable to create WhatsApp feedback notification.")
       );
     } finally {
       setLoading(false);
@@ -1543,7 +1559,12 @@ const CheckOut: React.FC<CheckOutProps> = ({
   // PRINT
   // ---------------------------------------------------------
 
-  const printBill = () => {
+  const printBill = async () => {
+    if (!generatedBill) {
+      return;
+    }
+
+    await saveBillPdf(generatedBill.bill_number);
     window.print();
   };
 
@@ -3291,10 +3312,13 @@ const CheckOut: React.FC<CheckOutProps> = ({
                 <div className="final-bill-toolbar">
                   <h2>Final Bill Preview</h2>
                   <button
-                    onClick={printBill}
+                    onClick={() => void printBill()}
+                    disabled={billPdfStatus?.saving}
                     className="final-bill-print-button"
                   >
-                    PRINT / SAVE PDF
+                    {billPdfStatus?.saving
+                      ? "SAVING PDF..."
+                      : "PRINT / SAVE PDF"}
                   </button>
                 </div>
                 {billPdfStatus?.billNumber === generatedBill.bill_number && (

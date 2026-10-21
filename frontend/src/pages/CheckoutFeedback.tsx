@@ -75,6 +75,8 @@ function CheckoutFeedback({
     comments: draft?.comments ?? context.feedback?.comments ?? "",
   });
   const [validationError, setValidationError] = useState("");
+  const [pdfSaveError, setPdfSaveError] = useState("");
+  const [savingPdf, setSavingPdf] = useState(false);
 
   const categories: Array<{
     key: keyof Omit<CheckoutFeedbackValues, "comments">;
@@ -102,7 +104,7 @@ function CheckoutFeedback({
     ({ key }) => ratings[key] >= 1 && ratings[key] <= 5
   );
 
-  const submit = () => {
+  const submit = async () => {
     if (categories.some(({ key }) => ratings[key] < 1 || ratings[key] > 5)) {
       setValidationError(
         tr(
@@ -112,7 +114,51 @@ function CheckoutFeedback({
       );
       return;
     }
+
+    setPdfSaveError("");
+    if (window.electronAPI) {
+      setSavingPdf(true);
+      try {
+        await window.electronAPI.savePrintablePdf(
+          "feedback",
+          `Feedback-${context.booking_reference}`
+        );
+      } catch (error) {
+        console.error("Checkout feedback PDF save failed:", error);
+        setPdfSaveError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save the feedback PDF."
+        );
+        return;
+      } finally {
+        setSavingPdf(false);
+      }
+    }
+
     onSubmit(ratings);
+  };
+
+  const printFeedbackForm = async () => {
+    setPdfSaveError("");
+    setSavingPdf(true);
+    try {
+      if (window.electronAPI) {
+        await window.electronAPI.savePrintablePdf(
+          "feedback",
+          `Feedback-${context.booking_reference}`
+        );
+      }
+    } catch (error) {
+      setPdfSaveError(
+        error instanceof Error
+          ? error.message
+          : "Unable to save the feedback PDF."
+      );
+    } finally {
+      setSavingPdf(false);
+      window.print();
+    }
   };
 
   const formatDate = (date: string) => {
@@ -206,7 +252,7 @@ function CheckoutFeedback({
             type="button"
             className="secondary-action"
             onClick={onBack}
-            disabled={loading}
+            disabled={loading || savingPdf}
           >
             {tr("BACK", "मागे")}
           </button>
@@ -214,30 +260,40 @@ function CheckoutFeedback({
         <button
           type="button"
           className="secondary-action checkout-feedback-print-button"
-          onClick={() => window.print()}
-          disabled={loading || !ratingsComplete}
+          onClick={() => void printFeedbackForm()}
+          disabled={loading || savingPdf || !ratingsComplete}
         >
-          {tr("PRINT FEEDBACK FORM", "अभिप्राय फॉर्म प्रिंट करा")}
+          {savingPdf
+            ? tr("SAVING FEEDBACK PDF…", "फीडबॅक PDF जतन होत आहे…")
+            : tr("PRINT FEEDBACK FORM", "अभिप्राय फॉर्म प्रिंट करा")}
         </button>
         <button
           type="button"
           className="secondary-action"
           onClick={onSkip}
-          disabled={loading}
+          disabled={loading || savingPdf}
         >
           {tr("SKIP FEEDBACK", "अभिप्राय वगळा")}
         </button>
         <button
           type="button"
           className="continue-booking-button"
-          onClick={submit}
-          disabled={loading}
+          onClick={() => void submit()}
+          disabled={loading || savingPdf}
         >
-          {loading
-            ? tr("SAVING…", "जतन होत आहे…")
-            : tr("SAVE & CONTINUE TO CHECK-OUT", "जतन करून चेक-आउटकडे जा")}
+          {savingPdf
+            ? tr("SAVING FEEDBACK PDF…", "फीडबॅक PDF जतन होत आहे…")
+            : loading
+              ? tr("SAVING…", "जतन होत आहे…")
+              : tr("SAVE & CONTINUE TO CHECK-OUT", "जतन करून चेक-आउटकडे जा")}
         </button>
       </div>
+      {pdfSaveError && (
+        <p className="checkout-feedback-error" role="alert">
+          {tr("Feedback PDF was not saved:", "फीडबॅक PDF जतन झाला नाही:")}{" "}
+          {pdfSaveError}
+        </p>
+      )}
 
       <article className="checkout-feedback-printable">
         <header className="checkout-feedback-print-header">

@@ -226,6 +226,8 @@ function Approval({
   ======================================================= */
 
   useEffect(() => {
+    // This effect starts the initial async API load.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadApprovals();
   }, [loadApprovals]);
 
