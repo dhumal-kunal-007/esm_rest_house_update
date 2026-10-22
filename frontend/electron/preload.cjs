@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       bookingReference,
       documents
     ),
+  scanBookingDocument: () =>
+    ipcRenderer.invoke("booking-documents:scan"),
   saveInvoicePdf: (invoiceNumber) =>
     ipcRenderer.invoke("invoice:save-pdf", invoiceNumber),
   saveBillPdf: (billNumber) =>

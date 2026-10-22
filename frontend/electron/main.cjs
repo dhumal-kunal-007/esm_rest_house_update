@@ -6,13 +6,17 @@ const {
   utilityProcess,
 } = require("electron");
 const { autoUpdater } = require("electron-updater");
+const { execFile } = require("node:child_process");
 const fs = require("node:fs/promises");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("path");
+const { promisify } = require("node:util");
 
 let mainWindow;
 let backendProcess;
 
+const execFileAsync = promisify(execFile);
 const backendUrl = "http://127.0.0.1:5000/api/health";
 const requiredEnvironmentKeys = [
   "DB_HOST",
@@ -504,6 +508,89 @@ ipcMain.handle(
     return { directory: bookingDirectory, files: savedFiles };
   }
 );
+
+ipcMain.handle("booking-documents:scan", async () => {
+  if (process.platform !== "win32") {
+    throw new Error("Document scanning is available in the Windows desktop app.");
+  }
+
+  const scanDirectory = await fs.mkdtemp(
+    path.join(os.tmpdir(), "esm-booking-scan-")
+  );
+  const outputPath = path.join(scanDirectory, "scanned-document.jpg");
+  const scanScript = `
+$ErrorActionPreference = 'Stop'
+Add-Type -Namespace ESM -Name ConsoleWindow -MemberDefinition '
+  [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+  [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);
+'
+[ESM.ConsoleWindow]::ShowWindow([ESM.ConsoleWindow]::GetConsoleWindow(), 0) | Out-Null
+try {
+  $dialog = New-Object -ComObject WIA.CommonDialog
+  $image = $dialog.ShowAcquireImage(
+    1,
+    1,
+    0,
+    '{B96B3CAE-0728-11D3-9D7B-0000F81EF32E}',
+    $true,
+    $true,
+    $true
+  )
+  if ($null -eq $image) {
+    [Console]::Out.WriteLine('ESM_SCAN_CANCELLED')
+    exit 0
+  }
+  $image.SaveFile($env:ESM_SCAN_OUTPUT_PATH)
+} catch {
+  $hresult = '{0:X8}' -f ($_.Exception.HResult -band 0xFFFFFFFF)
+  if ($hresult -eq '80210064') {
+    [Console]::Out.WriteLine('ESM_SCAN_CANCELLED')
+    exit 0
+  }
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 1
+}`;
+
+  try {
+    const result = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", scanScript],
+      {
+        windowsHide: false,
+        timeout: 300_000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...process.env,
+          ESM_SCAN_OUTPUT_PATH: outputPath,
+        },
+      }
+    );
+    if (result.stdout.trim() === "ESM_SCAN_CANCELLED") {
+      return null;
+    }
+
+    const file = await fs.readFile(outputPath);
+    if (file.length < 1 || file.length > 5 * 1024 * 1024) {
+      throw new Error("The scanned document must be 5 MB or smaller.");
+    }
+
+    return {
+      fileName: `Scanned ID - ${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`,
+      mimeType: "image/jpeg",
+      content: new Uint8Array(file),
+    };
+  } catch (error) {
+    if (error.code === 3 && error.stdout?.trim() === "ESM_SCAN_CANCELLED") {
+      return null;
+    }
+    const detail = error.stderr?.trim() || error.message;
+    throw new Error(
+      `Unable to scan the document. Check that the scanner is connected and available, then try again. ${detail}`
+    );
+  } finally {
+    await fs.rm(scanDirectory, { recursive: true, force: true });
+  }
+});
 
 ipcMain.handle("invoice:save-pdf", async (event, invoiceNumber) => {
   if (typeof invoiceNumber !== "string" || !/^\d{8}$/.test(invoiceNumber)) {

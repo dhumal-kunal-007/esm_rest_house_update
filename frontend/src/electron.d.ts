@@ -39,6 +39,11 @@ interface Window {
         content: Uint8Array;
       }>
     ) => Promise<{ directory: string; files: string[] }>;
+    scanBookingDocument: () => Promise<{
+      fileName: string;
+      mimeType: "image/jpeg";
+      content: Uint8Array;
+    } | null>;
     saveInvoicePdf: (
       invoiceNumber: string
     ) => Promise<{ filePath: string }>;

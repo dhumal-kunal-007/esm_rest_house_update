@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useState,
 } from "react";
 
@@ -36,6 +37,38 @@ const relationshipProofOptions = [
 
 const STANDARD_CHECK_IN_TIME = "13:00";
 const STANDARD_CHECK_OUT_TIME = "13:00";
+
+function BookingDocumentPreview({
+  file,
+  label,
+}: {
+  file: File;
+  label: string;
+}) {
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  useEffect(() => {
+    if (!file.type.startsWith("image/")) {
+      setPreviewUrl("");
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  if (!previewUrl) {
+    return null;
+  }
+
+  return (
+    <div className="booking-document-preview">
+      <small>{label}</small>
+      <img src={previewUrl} alt={label} />
+    </div>
+  );
+}
 
 /* =================================
    TYPES
@@ -335,9 +368,74 @@ function Booking({
   const [checkInError, setCheckInError] = useState("");
   const [checkOutError, setCheckOutError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
+  const [scanningDocumentFor, setScanningDocumentFor] =
+    useState<string | null>(null);
 
   const showValidationMessage = (message: string) => {
     setValidationMessage(message);
+  };
+
+  const scanDocument = async (target: "booking-person" | number) => {
+    const targetKey =
+      target === "booking-person" ? target : `occupant-${target}`;
+    if (!window.electronAPI?.scanBookingDocument) {
+      showValidationMessage(
+        tr(
+          "Scanning is available only in the Windows desktop app.",
+          "स्कॅन करण्याची सुविधा फक्त Windows desktop app मध्ये उपलब्ध आहे."
+        )
+      );
+      return;
+    }
+
+    setScanningDocumentFor(targetKey);
+    setValidationMessage("");
+    try {
+      const result = await window.electronAPI.scanBookingDocument();
+      if (!result) {
+        return;
+      }
+
+      const content = new Uint8Array(
+        new ArrayBuffer(result.content.byteLength)
+      );
+      content.set(result.content);
+      const file = new File([content.buffer], result.fileName, {
+        type: result.mimeType,
+      });
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error(
+          tr(
+            "The scanned document must be 5 MB or smaller. Try a lower scan resolution.",
+            "स्कॅन केलेला दस्तऐवज ५ MB किंवा त्यापेक्षा कमी असावा. कमी scan resolution वापरून पहा."
+          )
+        );
+      }
+
+      if (target === "booking-person") {
+        setServiceman((current) => ({ ...current, document: file }));
+      } else {
+        setGuests((current) =>
+          current.map((guest, index) =>
+            index === target
+              ? { ...guest, document: file }
+              : guest
+          )
+        );
+      }
+    } catch (error) {
+      console.error("Booking document scan failed:", error);
+      showValidationMessage(
+        error instanceof Error
+          ? error.message
+          : tr(
+              "Unable to scan the document. Check the scanner connection and try again.",
+              "दस्तऐवज स्कॅन करता आला नाही. स्कॅनरचे connection तपासून पुन्हा प्रयत्न करा."
+            )
+      );
+    } finally {
+      setScanningDocumentFor(null);
+    }
   };
 
 
@@ -1764,20 +1862,62 @@ function Booking({
 
           <div className="form-field">
             <label>{tr("Booking person's ID document *", "बुकिंग व्यक्तीचे ओळखपत्र *")}</label>
-            <input
-              type="file"
-              required
-              accept="application/pdf,image/jpeg,image/png"
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                if (file && file.size > 5 * 1024 * 1024) {
-                  showValidationMessage(tr("Each document must be 5 MB or smaller.", "प्रत्येक दस्तऐवज ५ MB किंवा त्यापेक्षा कमी असावा."));
-                  event.target.value = "";
-                  return;
-                }
-                setServiceman((current) => ({ ...current, document: file }));
-              }}
-            />
+            <div className="booking-document-control">
+              <label className="secondary-action booking-document-upload-button">
+                {tr("Upload document", "दस्तऐवज अपलोड करा")}
+                <input
+                  className="booking-document-file-input"
+                  type="file"
+                  accept="application/pdf,image/jpeg,image/png"
+                  aria-label={tr("Upload booking person's ID document", "बुकिंग व्यक्तीचे ओळखपत्र अपलोड करा")}
+                  aria-required="true"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    if (file && file.size > 5 * 1024 * 1024) {
+                      showValidationMessage(tr("Each document must be 5 MB or smaller.", "प्रत्येक दस्तऐवज ५ MB किंवा त्यापेक्षा कमी असावा."));
+                      event.target.value = "";
+                      return;
+                    }
+                    setServiceman((current) => ({ ...current, document: file }));
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                className="secondary-action"
+                disabled={scanningDocumentFor !== null}
+                onClick={() => void scanDocument("booking-person")}
+              >
+                {scanningDocumentFor === "booking-person"
+                  ? tr("Scanning…", "स्कॅन होत आहे…")
+                  : tr("Scan document", "दस्तऐवज स्कॅन करा")}
+              </button>
+            </div>
+            <small className="booking-document-upload-note">
+              {tr(
+                "The document will upload when you save the booking.",
+                "बुकिंग सेव्ह केल्यावर दस्तऐवज अपलोड होईल."
+              )}
+            </small>
+            {scanningDocumentFor === "booking-person" && (
+              <small className="booking-document-scan-status">
+                {tr(
+                  "Complete the scan in the scanner window that opened.",
+                  "उघडलेल्या scanner window मध्ये scan पूर्ण करा."
+                )}
+              </small>
+            )}
+            {serviceman.document && (
+              <>
+                <small className="booking-document-name">
+                  {tr("Selected:", "निवडलेली फाइल:")} {serviceman.document.name}
+                </small>
+                <BookingDocumentPreview
+                  file={serviceman.document}
+                  label={tr("Document preview", "दस्तऐवजाचा पूर्वावलोकन")}
+                />
+              </>
+            )}
           </div>
 
         </div>
@@ -2121,26 +2261,68 @@ function Booking({
                 </div>
                 <div className="form-field">
                   <label>{tr("Occupant ID document *", "अतिथीचे ओळखपत्र *")}</label>
-                  <input
-                    type="file"
-                    required
-                    accept="application/pdf,image/jpeg,image/png"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] ?? null;
-                      if (file && file.size > 5 * 1024 * 1024) {
-                        showValidationMessage(tr("Each document must be 5 MB or smaller.", "प्रत्येक दस्तऐवज ५ MB किंवा त्यापेक्षा कमी असावा."));
-                        event.target.value = "";
-                        return;
-                      }
-                      setGuests((current) =>
-                        current.map((item, itemIndex) =>
-                          itemIndex === index
-                            ? { ...item, document: file }
-                            : item
-                        )
-                      );
-                    }}
-                  />
+                  <div className="booking-document-control">
+                    <label className="secondary-action booking-document-upload-button">
+                      {tr("Upload document", "दस्तऐवज अपलोड करा")}
+                      <input
+                        className="booking-document-file-input"
+                        type="file"
+                        accept="application/pdf,image/jpeg,image/png"
+                        aria-label={tr(`Upload occupant ${index + 1} ID document`, `अतिथी ${index + 1} चे ओळखपत्र अपलोड करा`)}
+                        aria-required={!guest.id}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null;
+                          if (file && file.size > 5 * 1024 * 1024) {
+                            showValidationMessage(tr("Each document must be 5 MB or smaller.", "प्रत्येक दस्तऐवज ५ MB किंवा त्यापेक्षा कमी असावा."));
+                            event.target.value = "";
+                            return;
+                          }
+                          setGuests((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? { ...item, document: file }
+                                : item
+                            )
+                          );
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      disabled={scanningDocumentFor !== null}
+                      onClick={() => void scanDocument(index)}
+                    >
+                      {scanningDocumentFor === `occupant-${index}`
+                        ? tr("Scanning…", "स्कॅन होत आहे…")
+                        : tr("Scan document", "दस्तऐवज स्कॅन करा")}
+                    </button>
+                  </div>
+                  <small className="booking-document-upload-note">
+                    {tr(
+                      "The document will upload when you save the booking.",
+                      "बुकिंग सेव्ह केल्यावर दस्तऐवज अपलोड होईल."
+                    )}
+                  </small>
+                  {scanningDocumentFor === `occupant-${index}` && (
+                    <small className="booking-document-scan-status">
+                      {tr(
+                        "Complete the scan in the scanner window that opened.",
+                        "उघडलेल्या scanner window मध्ये scan पूर्ण करा."
+                      )}
+                    </small>
+                  )}
+                  {guest.document && (
+                    <>
+                      <small className="booking-document-name">
+                        {tr("Selected:", "निवडलेली फाइल:")} {guest.document.name}
+                      </small>
+                      <BookingDocumentPreview
+                        file={guest.document}
+                        label={tr("Document preview", "दस्तऐवजाचा पूर्वावलोकन")}
+                      />
+                    </>
+                  )}
                 </div>
 
 
