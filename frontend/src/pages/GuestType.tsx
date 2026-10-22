@@ -13,13 +13,21 @@ export type GuestTypeValue =
   | "SERVING"
   | "CIVILIAN";
 
+export interface DormitoryGuestTypeSelection {
+  guestId: string;
+  guestName: string;
+  guestType?: GuestTypeValue;
+}
+
 interface GuestTypeProps {
   officerName: string;
+  dormitoryGuests?: DormitoryGuestTypeSelection[];
 
   onBack: () => void;
 
   onContinue: (
-    guestType: GuestTypeValue
+    guestType: GuestTypeValue,
+    guestTypesByGuest?: Record<string, GuestTypeValue>
   ) => void;
 }
 
@@ -29,6 +37,7 @@ interface GuestTypeProps {
 
 function GuestType({
   officerName,
+  dormitoryGuests = [],
   onBack,
   onContinue,
 }: GuestTypeProps) {
@@ -61,6 +70,19 @@ function GuestType({
     selectedGuestType,
     setSelectedGuestType,
   ] = useState<GuestTypeValue | "">("");
+  const [
+    selectedGuestTypesByGuest,
+    setSelectedGuestTypesByGuest,
+  ] = useState<Record<string, GuestTypeValue>>(() =>
+    Object.fromEntries(
+      dormitoryGuests.flatMap((guest) =>
+        guest.guestType
+          ? [[guest.guestId, guest.guestType]]
+          : []
+      )
+    )
+  );
+  const isPerGuestSelection = dormitoryGuests.length > 0;
 
   /* =================================
      LANGUAGE SWITCHER
@@ -110,6 +132,27 @@ function GuestType({
   ================================== */
 
   const handleContinue = () => {
+    if (isPerGuestSelection) {
+      const missingGuest = dormitoryGuests.find(
+        (guest) => !selectedGuestTypesByGuest[guest.guestId]
+      );
+
+      if (missingGuest) {
+        window.alert(
+          tr(
+            `Please select a Guest Type for ${missingGuest.guestName}.`,
+            `${missingGuest.guestName} यांच्यासाठी अतिथीचा प्रकार निवडा.`
+          )
+        );
+        return;
+      }
+
+      onContinue(
+        selectedGuestTypesByGuest[dormitoryGuests[0].guestId],
+        selectedGuestTypesByGuest
+      );
+      return;
+    }
 
     if (!selectedGuestType) {
       window.alert(
@@ -137,18 +180,14 @@ function GuestType({
     title: string,
     marathiTitle: string,
     description: string,
-    marathiDescription: string
+    marathiDescription: string,
+    isSelected: boolean,
+    onSelect: () => void
   ) => {
-
-    const isSelected =
-      selectedGuestType === type;
-
     return (
       <button
         type="button"
-        onClick={() =>
-          setSelectedGuestType(type)
-        }
+        onClick={onSelect}
         style={{
           width: "100%",
           textAlign: "left",
@@ -538,8 +577,12 @@ function GuestType({
             }}
           >
             {tr(
-              "Select the guest category. This selection will be used in the next stage to calculate the applicable accommodation rate.",
-              "अतिथीचा प्रकार निवडा. पुढील टप्प्यात लागू निवास दर निश्चित करण्यासाठी या निवडीचा वापर केला जाईल."
+              isPerGuestSelection
+                ? "Select a category for each guest assigned to a DM bed. The configured rate will be applied separately for each bed."
+                : "Select the guest category. This selection will be used in the next stage to calculate the applicable accommodation rate.",
+              isPerGuestSelection
+                ? "DM बेडवर नियुक्त केलेल्या प्रत्येक अतिथीसाठी प्रकार निवडा. प्रत्येक बेडसाठी लागू दर स्वतंत्रपणे वापरला जाईल."
+                : "अतिथीचा प्रकार निवडा. पुढील टप्प्यात लागू निवास दर निश्चित करण्यासाठी या निवडीचा वापर केला जाईल."
             )}
           </p>
 
@@ -576,8 +619,12 @@ function GuestType({
 
             <p>
               {tr(
-                "Choose one category before proceeding to Rate.",
-                "दराच्या टप्प्यावर जाण्यापूर्वी एक प्रकार निवडा."
+                isPerGuestSelection
+                  ? "Choose one category for every DM bed occupant."
+                  : "Choose one category before proceeding to Rate.",
+                isPerGuestSelection
+                  ? "प्रत्येक DM बेडवरील अतिथीसाठी एक प्रकार निवडा."
+                  : "दराच्या टप्प्यावर जाण्यापूर्वी एक प्रकार निवडा."
               )}
             </p>
 
@@ -586,43 +633,121 @@ function GuestType({
         </div>
 
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "repeat(3, minmax(0, 1fr))",
-            gap: "16px",
-          }}
-        >
-
-          {renderGuestTypeCard(
-            "ESM",
-            "1",
-            "ESM",
-            "माजी सैनिक",
-            "Ex-Serviceman / eligible ESM guest.",
-            "माजी सैनिक / पात्र ESM अतिथी."
+        {isPerGuestSelection
+          ? dormitoryGuests.map((guest) => (
+              <div
+                key={guest.guestId}
+                style={{
+                  padding: "20px",
+                  marginTop: "18px",
+                  border: "1px solid #dfe5dc",
+                  borderRadius: "14px",
+                  background: "#fafbf9",
+                }}
+              >
+                <h3
+                  style={{
+                    margin: "0 0 14px",
+                    color: "#304633",
+                    fontSize: "18px",
+                  }}
+                >
+                  {guest.guestName}
+                </h3>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(3, minmax(0, 1fr))",
+                    gap: "16px",
+                  }}
+                >
+                  {renderGuestTypeCard(
+                    "ESM",
+                    "1",
+                    "ESM",
+                    "माजी सैनिक",
+                    "Ex-Serviceman / eligible ESM guest.",
+                    "माजी सैनिक / पात्र ESM अतिथी.",
+                    selectedGuestTypesByGuest[guest.guestId] === "ESM",
+                    () =>
+                      setSelectedGuestTypesByGuest((current) => ({
+                        ...current,
+                        [guest.guestId]: "ESM",
+                      }))
+                  )}
+                  {renderGuestTypeCard(
+                    "SERVING",
+                    "2",
+                    "Serving",
+                    "सेवारत",
+                    "Serving personnel guest.",
+                    "सेवारत सैनिक / कर्मचारी अतिथी.",
+                    selectedGuestTypesByGuest[guest.guestId] === "SERVING",
+                    () =>
+                      setSelectedGuestTypesByGuest((current) => ({
+                        ...current,
+                        [guest.guestId]: "SERVING",
+                      }))
+                  )}
+                  {renderGuestTypeCard(
+                    "CIVILIAN",
+                    "3",
+                    "Civilian",
+                    "नागरिक",
+                    "Civilian guest.",
+                    "नागरिक अतिथी.",
+                    selectedGuestTypesByGuest[guest.guestId] === "CIVILIAN",
+                    () =>
+                      setSelectedGuestTypesByGuest((current) => ({
+                        ...current,
+                        [guest.guestId]: "CIVILIAN",
+                      }))
+                  )}
+                </div>
+              </div>
+            ))
+          : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(3, minmax(0, 1fr))",
+                gap: "16px",
+              }}
+            >
+              {renderGuestTypeCard(
+                "ESM",
+                "1",
+                "ESM",
+                "माजी सैनिक",
+                "Ex-Serviceman / eligible ESM guest.",
+                "माजी सैनिक / पात्र ESM अतिथी.",
+                selectedGuestType === "ESM",
+                () => setSelectedGuestType("ESM")
+              )}
+              {renderGuestTypeCard(
+                "SERVING",
+                "2",
+                "Serving",
+                "सेवारत",
+                "Serving personnel guest.",
+                "सेवारत सैनिक / कर्मचारी अतिथी.",
+                selectedGuestType === "SERVING",
+                () => setSelectedGuestType("SERVING")
+              )}
+              {renderGuestTypeCard(
+                "CIVILIAN",
+                "3",
+                "Civilian",
+                "नागरिक",
+                "Civilian guest.",
+                "नागरिक अतिथी.",
+                selectedGuestType === "CIVILIAN",
+                () => setSelectedGuestType("CIVILIAN")
+              )}
+            </div>
           )}
-
-          {renderGuestTypeCard(
-            "SERVING",
-            "2",
-            "Serving",
-            "सेवारत",
-            "Serving personnel guest.",
-            "सेवारत सैनिक / कर्मचारी अतिथी."
-          )}
-
-          {renderGuestTypeCard(
-            "CIVILIAN",
-            "3",
-            "Civilian",
-            "नागरिक",
-            "Civilian guest.",
-            "नागरिक अतिथी."
-          )}
-
-        </div>
 
       </section>
 
@@ -636,11 +761,19 @@ function GuestType({
         style={{
           padding: "22px 28px",
           background:
-            selectedGuestType
+            (isPerGuestSelection
+              ? dormitoryGuests.every(
+                  (guest) => selectedGuestTypesByGuest[guest.guestId]
+                )
+              : Boolean(selectedGuestType))
               ? "#f2f7f1"
               : "#fafbf9",
           border:
-            selectedGuestType
+            (isPerGuestSelection
+              ? dormitoryGuests.every(
+                  (guest) => selectedGuestTypesByGuest[guest.guestId]
+                )
+              : Boolean(selectedGuestType))
               ? "1px solid #cdddc9"
               : "1px solid #e2e7df",
         }}
@@ -669,8 +802,12 @@ function GuestType({
               }}
             >
               {tr(
-                "Selected Guest Type",
-                "निवडलेला अतिथी प्रकार"
+                isPerGuestSelection
+                  ? "Selected Guest Types"
+                  : "Selected Guest Type",
+                isPerGuestSelection
+                  ? "निवडलेले अतिथी प्रकार"
+                  : "निवडलेला अतिथी प्रकार"
               )}
             </div>
 
@@ -681,12 +818,15 @@ function GuestType({
                 color: "#304633",
               }}
             >
-              {selectedGuestType
-                ? selectedGuestType
-                : tr(
-                    "Not selected",
-                    "निवडलेले नाही"
-                  )}
+              {isPerGuestSelection
+                ? dormitoryGuests.map((guest) => (
+                    <div key={guest.guestId}>
+                      {guest.guestName}:{" "}
+                      {selectedGuestTypesByGuest[guest.guestId] ??
+                        tr("Not selected", "निवडलेले नाही")}
+                    </div>
+                  ))
+                : selectedGuestType || tr("Not selected", "निवडलेले नाही")}
             </div>
 
           </div>
@@ -700,14 +840,26 @@ function GuestType({
               maxWidth: "450px",
             }}
           >
-            {selectedGuestType
+            {(isPerGuestSelection
+              ? dormitoryGuests.every(
+                  (guest) => selectedGuestTypesByGuest[guest.guestId]
+                )
+              : Boolean(selectedGuestType))
               ? tr(
-                  "Guest type selected. Continue to Rate.",
-                  "अतिथीचा प्रकार निवडला आहे. दराच्या टप्प्यावर पुढे जा."
+                  isPerGuestSelection
+                    ? "Guest type selected for every DM bed occupant. Continue to Rate."
+                    : "Guest type selected. Continue to Rate.",
+                  isPerGuestSelection
+                    ? "प्रत्येक DM बेडवरील अतिथीसाठी प्रकार निवडला आहे. दराच्या टप्प्यावर पुढे जा."
+                    : "अतिथीचा प्रकार निवडला आहे. दराच्या टप्प्यावर पुढे जा."
                 )
               : tr(
-                  "Select ESM, Serving or Civilian to continue.",
-                  "पुढे जाण्यासाठी ESM, सेवारत किंवा नागरिक निवडा."
+                  isPerGuestSelection
+                    ? "Select ESM, Serving or Civilian for every DM bed occupant."
+                    : "Select ESM, Serving or Civilian to continue.",
+                  isPerGuestSelection
+                    ? "प्रत्येक DM बेडवरील अतिथीसाठी ESM, सेवारत किंवा नागरिक निवडा."
+                    : "पुढे जाण्यासाठी ESM, सेवारत किंवा नागरिक निवडा."
                 )}
           </div>
 

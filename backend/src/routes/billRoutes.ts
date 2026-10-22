@@ -488,6 +488,10 @@ router.post(
             END AS unit_key,
             a.room_id,
             a.bed_id,
+            MAX(room.room_number) AS room_number,
+            MAX(bed.bed_number) AS bed_number,
+            MAX(occupant.guest_name) AS guest_name,
+            MAX(acceptance.guest_type) AS guest_type,
             MIN(ci.check_in_time AT TIME ZONE 'Asia/Kolkata')::date AS check_in_date,
             MAX(co.check_out_time AT TIME ZONE 'Asia/Kolkata')::date AS check_out_date,
             MAX(
@@ -524,6 +528,10 @@ router.post(
           LEFT JOIN booking_acceptances acceptance
             ON acceptance.booking_id = a.booking_id
            AND acceptance.guest_id = a.guest_id
+          LEFT JOIN rooms room
+            ON room.id = a.room_id
+          LEFT JOIN beds bed
+            ON bed.id = a.bed_id
           LEFT JOIN room_rate_cards card ON card.room_id = a.room_id
           LEFT JOIN booking_legacy_bill_rates legacy_rate
             ON legacy_rate.booking_id = a.booking_id
@@ -541,7 +549,26 @@ router.post(
           COALESCE(
             SUM(GREATEST(1, check_out_date - check_in_date) * daily_rate),
             0
-          )::NUMERIC AS room_charges
+          )::NUMERIC AS room_charges,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'room_number', room_number,
+                'bed_number', bed_number,
+                'guest_name', guest_name,
+                'guest_type', guest_type,
+                'daily_rate', daily_rate,
+                'stay_days', GREATEST(1, check_out_date - check_in_date),
+                'amount',
+                  ROUND(
+                    daily_rate * GREATEST(1, check_out_date - check_in_date),
+                    2
+                  )
+              )
+              ORDER BY unit_key
+            ) FILTER (WHERE daily_rate IS NOT NULL AND daily_rate > 0),
+            '[]'::jsonb
+          ) AS accommodation_rate_details
         FROM unit_stays
         `,
         [booking_id]
@@ -807,6 +834,8 @@ router.post(
 
           accommodation_unit_days:
             accommodationUnitDays,
+          accommodation_rate_details:
+            accommodationUsageResult.rows[0].accommodation_rate_details,
           room_charges:
             roomCharges,
 

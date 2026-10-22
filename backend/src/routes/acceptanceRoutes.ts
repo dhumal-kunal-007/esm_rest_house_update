@@ -313,13 +313,13 @@ router.post("/", async (req: Request, res: Response) => {
 
     if (
       normalizedRoomCategory === "DORMITORY" &&
-      (!bedId || !guestType)
+      !bedId
     ) {
       await client.query("ROLLBACK");
       return res.status(400).json({
         success: false,
         message:
-          "Select ESM, Serving, or Civilian for every guest assigned to a Dormitory bed.",
+          "Select a bed for every guest assigned to a Dormitory room.",
       });
     }
 

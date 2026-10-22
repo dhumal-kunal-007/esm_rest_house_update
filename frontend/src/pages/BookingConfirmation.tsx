@@ -22,6 +22,8 @@ export interface AcceptedAccommodation {
 
   roomName: string;
 
+  roomCategory?: string;
+
   bedId?: string;
 
   bedNumber?: number;
@@ -201,7 +203,12 @@ function BookingConfirmation({
   ================================== */
 
   const guestTypeLabel =
-    booking.guestType === "ESM"
+    booking.rateSelection.accommodationCategory === "DORMITORY"
+      ? tr(
+          "Selected separately for each guest",
+          "प्रत्येक अतिथीसाठी स्वतंत्र निवड"
+        )
+      : booking.guestType === "ESM"
       ? tr(
           "ESM",
           "माजी सैनिक"

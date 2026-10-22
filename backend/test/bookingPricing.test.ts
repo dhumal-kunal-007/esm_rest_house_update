@@ -49,11 +49,13 @@ test("prices a mixed dormitory assignment with each occupant's selected rate", (
     guestType: "ESM",
     accommodationCategory: "DORMITORY",
     checkInDate: "2026-10-01",
-    checkOutDate: "2026-10-02",
+    checkOutDate: "2026-10-04",
     roomCount: rates.length,
     unitRates: rates,
   });
-  assert.equal(pricing.accommodationAmount, 330);
+
+  assert.equal(pricing.accommodationDays, 3);
+  assert.equal(pricing.accommodationAmount, 990);
 });
 
 test("recognizes only supported guest types, leaving missing choices invalid", () => {

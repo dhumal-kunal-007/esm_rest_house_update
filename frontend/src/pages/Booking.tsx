@@ -36,7 +36,6 @@ const relationshipProofOptions = [
 ];
 
 const STANDARD_CHECK_IN_TIME = "13:00";
-const STANDARD_CHECK_OUT_TIME = "13:00";
 
 function BookingDocumentPreview({
   file,
@@ -224,6 +223,16 @@ const getDatePart = (
   );
 };
 
+const getTimePart = (
+  value: string | undefined,
+  fallback = "13:00"
+): string => {
+  const time = value?.includes("T")
+    ? value.slice(11, 16)
+    : "";
+  return /^\d{2}:\d{2}$/.test(time) ? time : fallback;
+};
+
 /* =================================
    EMPTY GUEST
 ================================== */
@@ -360,11 +369,17 @@ function Booking({
         STANDARD_CHECK_IN_TIME
       )
   );
+  const [checkInTime, setCheckInTime] = useState(
+    getTimePart(initialBooking?.checkIn)
+  );
 
   const [
     checkOut,
     setCheckOut,
   ] = useState(initialBooking?.checkOut ?? "");
+  const [checkOutTime, setCheckOutTime] = useState(
+    getTimePart(initialBooking?.checkOut)
+  );
   const [checkInError, setCheckInError] = useState("");
   const [checkOutError, setCheckOutError] = useState("");
   const [validationMessage, setValidationMessage] = useState("");
@@ -516,7 +531,7 @@ function Booking({
       setCheckIn(
         createDateTime(
           today,
-          STANDARD_CHECK_IN_TIME
+          checkInTime
         )
       );
 
@@ -530,7 +545,7 @@ function Booking({
     setCheckIn(
       createDateTime(
         tomorrow,
-        STANDARD_CHECK_IN_TIME
+        checkInTime
       )
     );
 
@@ -772,7 +787,7 @@ function Booking({
     const selectedValue = value
       ? createDateTime(
           getDatePart(value),
-          STANDARD_CHECK_IN_TIME
+          checkInTime
         )
       : "";
     const selectedDate =
@@ -837,7 +852,7 @@ function Booking({
     const selectedValue = value
       ? createDateTime(
           getDatePart(value),
-          STANDARD_CHECK_OUT_TIME
+          checkOutTime
         )
       : "";
 
@@ -918,7 +933,9 @@ function Booking({
 
     if (
       !checkIn ||
-      !checkOut
+      !checkOut ||
+      !checkInTime ||
+      !checkOutTime
     ) {
       showValidationMessage(
         tr(
@@ -2079,10 +2096,16 @@ function Booking({
                       {tr("Female", "महिला")}
                     </option>
                     <option value="CHILD">
-                      {tr("Child", "बालक")}
+                      {tr(
+                        "Child <25 / Mother / Father",
+                        "२५ वर्षांखालील मूल / आई / वडील"
+                      )}
                     </option>
                     <option value="GUEST">
-                      {tr("Guest (Other)", "अतिथी (इतर)")}
+                      {tr(
+                        "Guest / Other / Child >25",
+                        "अतिथी / इतर / २५ वर्षांवरील मूल"
+                      )}
                     </option>
                   </select>
                 </div>
@@ -2600,6 +2623,21 @@ function Booking({
               aria-invalid={Boolean(checkInError)}
               aria-describedby={checkInError ? "booking-check-in-error" : undefined}
             />
+            <label style={{ marginTop: "12px" }}>
+              {tr("Check-In Time *", "चेक-इन वेळ *")}
+            </label>
+            <input
+              type="time"
+              value={checkInTime}
+              onChange={(event) => {
+                const value = event.target.value;
+                setCheckInTime(value);
+                if (value && checkIn) {
+                  setCheckIn(createDateTime(getDatePart(checkIn), value));
+                }
+              }}
+              required
+            />
             {checkInError && (
               <small
                 id="booking-check-in-error"
@@ -2664,6 +2702,21 @@ function Booking({
               aria-invalid={Boolean(checkOutError)}
               aria-describedby={checkOutError ? "booking-check-out-error" : undefined}
             />
+            <label style={{ marginTop: "12px" }}>
+              {tr("Check-Out Time *", "चेक-आउट वेळ *")}
+            </label>
+            <input
+              type="time"
+              value={checkOutTime}
+              onChange={(event) => {
+                const value = event.target.value;
+                setCheckOutTime(value);
+                if (value && checkOut) {
+                  setCheckOut(createDateTime(getDatePart(checkOut), value));
+                }
+              }}
+              required
+            />
             {checkOutError && (
               <small
                 id="booking-check-out-error"
@@ -2709,8 +2762,8 @@ function Booking({
           role="note"
         >
           {tr(
-            `Standard check-in and check-out time is 1:00 PM on the selected dates. Same-day room reuse is allowed after the previous guest checks out and housekeeping clears the accommodation.`,
-            `निवडलेल्या तारखांना नियमित चेक-इन आणि चेक-आउटची वेळ दुपारी १:०० आहे. मागील अतिथीने चेक-आउट केल्यानंतर आणि हाऊसकीपिंगने खोली स्वच्छ केल्यानंतर ती त्याच दिवशी पुन्हा देता येईल.`
+            `Default check-in and check-out time is 1:00 PM; you can change it above. Same-day room reuse is allowed after the previous guest checks out and housekeeping clears the accommodation.`,
+            `चेक-इन आणि चेक-आउटची डिफॉल्ट वेळ दुपारी १:०० आहे; ती वरील वेळ निवडून बदलता येते. मागील अतिथीने चेक-आउट केल्यानंतर आणि हाऊसकीपिंगने खोली स्वच्छ केल्यानंतर ती त्याच दिवशी पुन्हा देता येईल.`
           )}
         </p>
 

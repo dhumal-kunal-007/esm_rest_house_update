@@ -2373,6 +2373,94 @@ router.post("/:bookingId/pricing", async (req, res) => {
             });
         }
 
+        const dormitoryGuestTypes: Record<string, GuestType> = {};
+        if (accommodationCategory === "DORMITORY") {
+            const acceptedBeds = await client.query(
+                `
+                SELECT guest_id, bed_id, guest_type
+                FROM booking_acceptances
+                WHERE booking_id = $1
+                  AND acceptance_status = 'ACCEPTED'
+                ORDER BY guest_id
+                FOR UPDATE
+                `,
+                [booking.id]
+            );
+            if (
+                acceptedBeds.rows.length !== acceptedGuestCount ||
+                acceptedBeds.rows.some((row) => !row.bed_id)
+            ) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({
+                    success: false,
+                    message:
+                        "Every Dormitory guest must be assigned to a bed before selecting guest types.",
+                });
+            }
+
+            const requestedGuestTypes = req.body?.guest_types_by_guest;
+            const suppliedGuestTypes =
+                requestedGuestTypes !== null &&
+                typeof requestedGuestTypes === "object" &&
+                !Array.isArray(requestedGuestTypes)
+                    ? requestedGuestTypes as Record<string, unknown>
+                    : null;
+            if (requestedGuestTypes !== undefined && !suppliedGuestTypes) {
+                await client.query("ROLLBACK");
+                return res.status(400).json({
+                    success: false,
+                    message: "Guest types must be provided as a guest ID map.",
+                });
+            }
+
+            const acceptedGuestIds = new Set(
+                acceptedBeds.rows.map((row) => String(row.guest_id))
+            );
+            if (suppliedGuestTypes) {
+                const suppliedGuestIds = Object.keys(suppliedGuestTypes);
+                if (
+                    suppliedGuestIds.length !== acceptedGuestIds.size ||
+                    suppliedGuestIds.some((guestId) => !acceptedGuestIds.has(guestId))
+                ) {
+                    await client.query("ROLLBACK");
+                    return res.status(400).json({
+                        success: false,
+                        message:
+                            "Select a Guest Type for every guest assigned to a Dormitory bed.",
+                    });
+                }
+            }
+
+            for (const row of acceptedBeds.rows) {
+                const guestId = String(row.guest_id);
+                const guestTypeForOccupant = suppliedGuestTypes
+                    ? suppliedGuestTypes[guestId]
+                    : row.guest_type;
+                if (!isGuestType(guestTypeForOccupant)) {
+                    await client.query("ROLLBACK");
+                    return res.status(400).json({
+                        success: false,
+                        message:
+                            "Select ESM, Serving, or Civilian for every guest assigned to a Dormitory bed.",
+                    });
+                }
+
+                dormitoryGuestTypes[guestId] = guestTypeForOccupant;
+                if (row.guest_type !== guestTypeForOccupant) {
+                    await client.query(
+                        `
+                        UPDATE booking_acceptances
+                        SET guest_type = $3
+                        WHERE booking_id = $1
+                          AND guest_id = $2
+                          AND acceptance_status = 'ACCEPTED'
+                        `,
+                        [booking.id, guestId, guestTypeForOccupant]
+                    );
+                }
+            }
+        }
+
         const rateField = roomRateColumnForGuestType(guestType);
         let unitRates: number[];
         let accommodationUnits = Number(accepted.room_count);
@@ -2618,12 +2706,19 @@ router.post("/:bookingId/pricing", async (req, res) => {
                     booking_workflow_progress.progress_data ||
                     jsonb_build_object(
                         'guest_type', $2::TEXT,
-                        'dm_bed_rate_details', $4::JSONB
+                        'dm_bed_rate_details', $4::JSONB,
+                        'dm_guest_types', $5::JSONB
                     ),
                 updated_by = EXCLUDED.updated_by,
                 updated_at = CURRENT_TIMESTAMP
             `,
-            [booking.id, pricing.guestType, userId, JSON.stringify(dmBedRateDetails)]
+            [
+                booking.id,
+                pricing.guestType,
+                userId,
+                JSON.stringify(dmBedRateDetails),
+                JSON.stringify(dormitoryGuestTypes),
+            ]
         );
 
         await client.query("COMMIT");

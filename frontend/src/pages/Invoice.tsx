@@ -3,6 +3,7 @@ import { useState } from "react";
 import "../App.css";
 
 import { useLanguage } from "../i18n/LanguageContext";
+import type { BedRateDetail } from "./Rate";
 
 /* =================================
    TYPES
@@ -29,6 +30,10 @@ export interface InvoiceData {
     | "ESM"
     | "SERVING"
     | "CIVILIAN";
+
+  bedRateDetails?: BedRateDetail[];
+
+  accommodationDays?: number;
 
   totalAmount: number;
 
@@ -66,6 +71,10 @@ interface InvoiceProps {
     | "ESM"
     | "SERVING"
     | "CIVILIAN";
+
+  bedRateDetails?: BedRateDetail[];
+
+  accommodationDays?: number;
 
   totalAmount: number;
 
@@ -161,6 +170,31 @@ const formatDate = (
   });
 };
 
+const formatDateTime = (
+  value: string | undefined
+): string => {
+  if (!value) {
+    return "—";
+  }
+
+  const date = formatDate(value);
+  const time = value.includes("T") ? value.slice(11, 16) : "";
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match) {
+    return date;
+  }
+
+  const hour = Number(match[1]);
+  const minute = match[2];
+  if (hour > 23 || Number(minute) > 59) {
+    return date;
+  }
+
+  const hour12 = hour % 12 || 12;
+  const period = hour >= 12 ? "PM" : "AM";
+  return `${date}, ${hour12}:${minute} ${period}`;
+};
+
 /* =================================
    COMPONENT
 ================================== */
@@ -171,6 +205,8 @@ function Invoice({
   bookingReference,
   guestName,
   guestType,
+  bedRateDetails = [],
+  accommodationDays = 0,
   totalAmount,
   paidAmount,
   paymentMethod,
@@ -238,7 +274,9 @@ function Invoice({
       : english;
 
   const printedGuestTypeLabel =
-    guestType === "ESM"
+    bedRateDetails.length > 0
+      ? tr("Per-guest rate", "प्रत्येक अतिथीनुसार दर")
+      : guestType === "ESM"
       ? tr("Ex-Servicemen", "माजी सैनिक")
       : guestType === "SERVING"
       ? tr("Serving Personnel", "सेवारत कर्मचारी")
@@ -290,6 +328,10 @@ function Invoice({
       }
     };
 
+    const invoiceBedRateDetails =
+      generatedInvoice.bedRateDetails ?? bedRateDetails;
+    const invoiceAccommodationDays =
+      generatedInvoice.accommodationDays ?? accommodationDays;
     const renderInvoiceCopy = (copyType: "GUEST" | "ESM") => (
       <section
         className={`invoice-copy invoice-copy-${copyType.toLowerCase()}`}
@@ -348,11 +390,11 @@ function Invoice({
             </span>
             <p>
               <strong>{tr("Check-in:", "चेक-इन:")}</strong>{" "}
-              {formatDate(checkIn)}
+              {formatDateTime(checkIn)}
             </p>
             <p>
               <strong>{tr("Check-out:", "चेक-आउट:")}</strong>{" "}
-              {formatDate(checkOut)}
+              {formatDateTime(checkOut)}
             </p>
           </div>
         </section>
@@ -378,13 +420,57 @@ function Invoice({
                   </td>
                   <td>{item.guestName}</td>
                   <td>
-                    {formatDate(checkIn)} – {formatDate(checkOut)}
+                    {formatDateTime(checkIn)} – {formatDateTime(checkOut)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </section>
+
+        {invoiceBedRateDetails.length > 0 && (
+          <section className="invoice-document-section">
+            <h3>{tr("DM BED RATE BREAKDOWN", "DM बेड दर तपशील")}</h3>
+            <table className="invoice-document-table">
+              <thead>
+                <tr>
+                  <th>{tr("Room / Bed", "खोली / बेड")}</th>
+                  <th>{tr("Occupant / Type", "अतिथी / प्रकार")}</th>
+                  <th>{tr("Rate × Days", "दर × दिवस")}</th>
+                  <th>{tr("Amount", "रक्कम")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoiceBedRateDetails.map((detail, index) => {
+                  const rateTypeLabel =
+                    detail.guestType === "ESM"
+                      ? "ESM"
+                      : detail.guestType === "SERVING"
+                        ? tr("Serving", "सेवारत")
+                        : tr("Civilian", "नागरिक");
+                  return (
+                    <tr
+                      key={`${detail.roomName}-${detail.bedNumber}-${detail.guestName}-${index}`}
+                    >
+                      <td>
+                        {detail.roomName} — {tr("Bed", "बेड")}{" "}
+                        {detail.bedNumber}
+                      </td>
+                      <td>
+                        {detail.guestName} · {rateTypeLabel}
+                      </td>
+                      <td>
+                        {formatCurrency(detail.dailyRate)} ×{" "}
+                        {invoiceAccommodationDays} {tr("day(s)", "दिवस")}
+                      </td>
+                      <td>{formatCurrency(detail.stayAmount)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </section>
+        )}
 
         <section className="invoice-document-section">
           <h3>{tr("PAYMENT SUMMARY", "पेमेंट सारांश")}</h3>
@@ -718,6 +804,10 @@ function Invoice({
         guestName,
 
         guestType,
+
+        bedRateDetails,
+
+        accommodationDays,
 
         totalAmount:
           safeTotal,

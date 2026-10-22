@@ -115,7 +115,9 @@ function Rate({
   const stayDays = calculateStayDays(checkIn, checkOut);
   const datesAreValid = stayDays > 0;
   const guestTypeLabel =
-    guestType === "ESM"
+    accommodationCategory === "DORMITORY"
+      ? tr("Selected per guest", "प्रत्येक अतिथीनुसार निवड")
+      : guestType === "ESM"
       ? tr("Ex-Serviceman", "माजी सैनिक")
       : guestType === "SERVING"
         ? tr("Serving", "सेवारत")

@@ -100,6 +100,15 @@ interface BillDetails {
   accommodation_rate?: number;
   accommodation_units?: number;
   accommodation_unit_days?: number;
+  accommodation_rate_details?: Array<{
+    room_number: string;
+    bed_number: number | null;
+    guest_name: string;
+    guest_type: string | null;
+    daily_rate: number;
+    stay_days: number;
+    amount: number;
+  }>;
   additional_person_count?: number;
   additional_person_rate?: number;
   additional_person_charges?: number;
@@ -3405,16 +3414,53 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       </tr>
                     </thead>
                     <tbody>
-                      <tr>
-                        <td>Accommodation — {generatedBill.accommodation_type || generatedBill.category_name || "Room"}</td>
-                        <td>
-                          {generatedBill.accommodation_unit_days ??
-                            (generatedBill.accommodation_units ?? 1) *
-                              (generatedBill.stay_days ?? 0)} unit-day(s), charged
-                          at each unit's applicable daily rate
-                        </td>
-                        <td>{Number(generatedBill.room_charges).toFixed(2)}</td>
-                      </tr>
+                      {generatedBill.accommodation_type === "DORMITORY" &&
+                      generatedBill.accommodation_rate_details?.length
+                        ? generatedBill.accommodation_rate_details.map(
+                            (detail, index) => (
+                              <tr
+                                key={`${detail.room_number}-${detail.bed_number}-${detail.guest_name}-${index}`}
+                              >
+                                <td>
+                                  {detail.room_number} — Bed{" "}
+                                  {detail.bed_number ?? "—"}
+                                </td>
+                                <td>
+                                  {detail.guest_name}
+                                  {detail.guest_type
+                                    ? ` · ${detail.guest_type}`
+                                    : ""}
+                                  {" · ₹"}
+                                  {Number(detail.daily_rate).toFixed(2)}
+                                  {" × "}
+                                  {detail.stay_days} day(s)
+                                </td>
+                                <td>
+                                  {Number(detail.amount).toFixed(2)}
+                                </td>
+                              </tr>
+                            )
+                          )
+                        : (
+                          <tr>
+                            <td>
+                              Accommodation —{" "}
+                              {generatedBill.accommodation_type ||
+                                generatedBill.category_name ||
+                                "Room"}
+                            </td>
+                            <td>
+                              {generatedBill.accommodation_unit_days ??
+                                (generatedBill.accommodation_units ?? 1) *
+                                  (generatedBill.stay_days ?? 0)}{" "}
+                              unit-day(s), charged at each unit's applicable
+                              daily rate
+                            </td>
+                            <td>
+                              {Number(generatedBill.room_charges).toFixed(2)}
+                            </td>
+                          </tr>
+                        )}
                       {(generatedBill.additional_person_count || 0) > 0 && (
                         <tr>
                           <td>Additional ESM / retired members</td>

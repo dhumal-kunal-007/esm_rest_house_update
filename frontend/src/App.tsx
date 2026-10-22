@@ -114,6 +114,21 @@ import type {
   WhatsAppFeedbackData,
 } from "./pages/WhatsAppFeedback";
 
+const isDormitoryCategory = (
+  category: string | undefined,
+  roomName = ""
+): boolean => {
+  const normalizedCategory = String(category ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  return (
+    normalizedCategory === "DM" ||
+    normalizedCategory === "DORMITORY" ||
+    /^DM(?:\s|$)/i.test(roomName.trim())
+  );
+};
+
 /* =========================================
    USER ROLES
 ========================================= */
@@ -1329,15 +1344,17 @@ function AppContent() {
       );
       setCurrentPage("workflow");
 
-      if (!bookingRemainsApproved) {
-        await saveBookingProgress(
-          bookingId,
-          "AVAILABILITY",
-          {
-            availability_selections: retainedSelections,
-          }
-        );
-      }
+      await saveBookingProgress(
+        bookingId,
+        "AVAILABILITY",
+        {
+          ...(bookingRemainsApproved
+            ? {}
+            : { availability_selections: retainedSelections }),
+          check_in_time: bookingToSave.checkIn.slice(11, 16),
+          expected_check_out_time: bookingToSave.checkOut.slice(11, 16),
+        }
+      );
 
       if (localDocumentSaveError) {
         setModal({
@@ -1518,10 +1535,18 @@ function AppContent() {
         guests,
         checkIn: String(savedBooking.check_in_date).includes("T")
           ? String(savedBooking.check_in_date)
-          : `${savedBooking.check_in_date}T13:00`,
+          : `${String(savedBooking.check_in_date).slice(0, 10)}T${
+              typeof data.progress_data?.check_in_time === "string"
+                ? data.progress_data.check_in_time
+                : "13:00"
+            }`,
         checkOut: String(savedBooking.check_out_date).includes("T")
           ? String(savedBooking.check_out_date)
-          : `${savedBooking.check_out_date}T13:00`,
+          : `${String(savedBooking.check_out_date).slice(0, 10)}T${
+              typeof data.progress_data?.expected_check_out_time === "string"
+                ? data.progress_data.expected_check_out_time
+                : "13:00"
+            }`,
       };
 
       const acceptedAccommodation: AcceptedAccommodation[] =
@@ -1529,6 +1554,7 @@ function AppContent() {
           (accepted: Record<string, unknown>) => ({
             roomId: String(accepted.room_id),
             roomName: String(accepted.room_number),
+            roomCategory: String(accepted.category_name ?? ""),
             ...(accepted.guest_type === "ESM" ||
                 accepted.guest_type === "SERVING" ||
                 accepted.guest_type === "CIVILIAN"
@@ -1554,6 +1580,7 @@ function AppContent() {
         selectionByGuest.set(item.guestId, {
           roomId: item.roomId,
           roomName: item.roomName,
+          roomCategory: item.roomCategory,
           bedId: item.bedId ?? "",
           bedNumber: item.bedNumber ?? 0,
           occupantName: item.guestName,
@@ -1874,23 +1901,6 @@ console.log(
       return;
     }
 
-    const bookingCategory = workflow.booking.category
-      .trim()
-      .toUpperCase()
-      .replace(/[\s-]+/g, "_");
-    if (
-      ["DM", "DORMITORY"].includes(bookingCategory) &&
-      selections.some((selection) => !selection.guestType)
-    ) {
-      setModal({
-        type: "warning",
-        title: "Guest Type Required",
-        message:
-          "Select ESM, Serving, or Civilian for every guest assigned to a Dormitory bed.",
-      });
-      return;
-    }
-
     const bookingGuestIds =
       workflow.booking.guests
         .map(
@@ -2015,6 +2025,9 @@ console.log(
             roomName:
               selection.roomName,
 
+            roomCategory:
+              selection.roomCategory,
+
             bedId:
               selection.bedId ||
               undefined,
@@ -2111,18 +2124,35 @@ console.log(
   ========================================= */
 
   const handleGuestTypeContinue = async (
-    guestType: GuestTypeValue
+    guestType: GuestTypeValue,
+    guestTypesByGuest?: Record<string, GuestTypeValue>
   ) => {
 
     if (!workflow.booking?.id) {
       return;
     }
 
+    const availabilitySelections = workflow.availabilitySelections.map(
+      (selection) => {
+        const selectedGuestType =
+          guestTypesByGuest?.[selection.guestId];
+        return selectedGuestType
+          ? { ...selection, guestType: selectedGuestType }
+          : selection;
+      }
+    );
+
     try {
       await saveBookingProgress(
         workflow.booking.id,
         "RATE",
-        { guest_type: guestType }
+        {
+          guest_type: guestType,
+          availability_selections: availabilitySelections,
+          ...(guestTypesByGuest
+            ? { dm_guest_types: guestTypesByGuest }
+            : {}),
+        }
       );
     } catch (error) {
       setModal({
@@ -2142,6 +2172,16 @@ console.log(
         stage:
           "RATE",
         guestType,
+        availabilitySelections,
+        acceptedAccommodation: current.acceptedAccommodation.map(
+          (accommodation) => {
+            const selectedGuestType =
+              guestTypesByGuest?.[accommodation.guestId];
+            return selectedGuestType
+              ? { ...accommodation, guestType: selectedGuestType }
+              : accommodation;
+          }
+        ),
       })
     );
 
@@ -2165,7 +2205,11 @@ console.log(
           workflow.booking.id,
           currentStep,
           workflow.guestType
-            ? { guest_type: workflow.guestType }
+            ? {
+                guest_type: workflow.guestType,
+                availability_selections:
+                  workflow.availabilitySelections,
+              }
             : {}
         );
       } catch (error) {
@@ -2212,6 +2256,29 @@ console.log(
           },
           body: JSON.stringify({
             guest_type: workflow.guestType,
+            ...(selection.accommodationCategory === "DORMITORY"
+              ? {
+                  guest_types_by_guest: Object.fromEntries(
+                    workflow.availabilitySelections
+                      .filter(
+                        (accommodation) =>
+                          isDormitoryCategory(
+                            accommodation.roomCategory,
+                            accommodation.roomName
+                          ) &&
+                          Boolean(
+                            accommodation.bedId &&
+                            accommodation.guestId &&
+                            accommodation.guestType
+                          )
+                      )
+                      .map((accommodation) => [
+                        accommodation.guestId,
+                        accommodation.guestType,
+                      ])
+                  ),
+                }
+              : {}),
             accommodation_category:
               selection.accommodationCategory,
           }),
@@ -3448,12 +3515,29 @@ const handleRoomLockedContinue = async (
 
     }
 
+    const dormitoryGuests = workflow.availabilitySelections
+      .filter(
+        (selection) =>
+          Boolean(selection.bedId && selection.guestId) &&
+          isDormitoryCategory(
+            selection.roomCategory,
+            selection.roomName
+          )
+      )
+      .map((selection) => ({
+        guestId: selection.guestId,
+        guestName: selection.occupantName,
+        guestType: selection.guestType,
+      }));
+
     return (
       <>
         <GuestType
           officerName={
             loggedInUser.name
           }
+
+          dormitoryGuests={dormitoryGuests}
 
           onBack={() => {
             void handleBookingStepBack(
@@ -4018,6 +4102,14 @@ const handleRoomLockedContinue = async (
 
           guestType={
             workflow.guestType
+          }
+
+          bedRateDetails={
+            workflow.rateResult.bedRateDetails
+          }
+
+          accommodationDays={
+            workflow.rateResult.accommodationDays
           }
 
           totalAmount={
