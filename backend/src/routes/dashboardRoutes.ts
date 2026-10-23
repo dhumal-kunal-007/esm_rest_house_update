@@ -115,10 +115,34 @@ router.get("/summary", async (req, res) => {
         )::INTEGER AS todays_check_ins,
 
 
-        /* Beds and room-only allotments waiting for housekeeping */
+        /* Current housekeeping state per room / bed, not stale inventory status */
         (
           (
-            SELECT COUNT(*)
+            WITH latest_units AS (
+              SELECT DISTINCT ON (a.room_id, a.bed_id)
+                a.room_id,
+                a.bed_id,
+                UPPER(REPLACE(ht.task_status, ' ', '_')) AS task_status
+              FROM housekeeping_tasks ht
+              INNER JOIN allotments a
+                ON a.id = ht.allotment_id
+              INNER JOIN rooms r
+                ON r.id = a.room_id
+              WHERE
+                r.is_active = TRUE
+                AND r.room_usage = 'GUEST'
+              ORDER BY
+                a.room_id,
+                a.bed_id,
+                COALESCE(ht.completed_at, ht.assigned_at) DESC,
+                ht.id DESC
+            )
+            SELECT COUNT(*)::INTEGER
+            FROM latest_units
+            WHERE task_status = 'NEEDS_CLEANING'
+          ) +
+          (
+            SELECT COUNT(*)::INTEGER
             FROM beds b
             INNER JOIN rooms r
               ON r.id = b.room_id
@@ -127,13 +151,20 @@ router.get("/summary", async (req, res) => {
               AND r.is_active = TRUE
               AND r.room_usage = 'GUEST'
               AND UPPER(b.bed_status) = 'NEEDS_CLEANING'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM housekeeping_tasks ht
+                INNER JOIN allotments a
+                  ON a.id = ht.allotment_id
+                WHERE a.room_id = b.room_id
+                  AND a.bed_id = b.id
+              )
           ) +
           (
-            SELECT COUNT(*)
-            FROM (
+            WITH latest_room_tasks AS (
               SELECT DISTINCT ON (a.room_id)
-                UPPER(REPLACE(ht.task_status, ' ', '_'))
-                  AS task_status
+                a.room_id,
+                UPPER(REPLACE(ht.task_status, ' ', '_')) AS task_status
               FROM housekeeping_tasks ht
               INNER JOIN allotments a
                 ON a.id = ht.allotment_id
@@ -142,20 +173,63 @@ router.get("/summary", async (req, res) => {
               WHERE
                 a.bed_id IS NULL
                 AND r.is_active = TRUE
+                AND r.room_usage = 'GUEST'
               ORDER BY
                 a.room_id,
-                ht.assigned_at DESC,
+                COALESCE(ht.completed_at, ht.assigned_at) DESC,
                 ht.id DESC
-            ) latest_room_tasks
+            )
+            SELECT COUNT(*)::INTEGER
+            FROM latest_room_tasks
             WHERE task_status = 'NEEDS_CLEANING'
+          ) +
+          (
+            SELECT COUNT(*)::INTEGER
+            FROM rooms r
+            WHERE
+              r.is_active = TRUE
+              AND r.room_usage = 'GUEST'
+              AND UPPER(r.room_status) = 'NEEDS_CLEANING'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM housekeeping_tasks ht
+                INNER JOIN allotments a
+                  ON a.id = ht.allotment_id
+                WHERE a.room_id = r.id
+                  AND a.bed_id IS NULL
+              )
           )
         )::INTEGER AS needs_cleaning_beds,
 
 
-        /* Beds and room-only allotments currently being cleaned */
+        /* Current cleaning tasks, excluding stale stored inventory statuses */
         (
           (
-            SELECT COUNT(*)
+            WITH latest_units AS (
+              SELECT DISTINCT ON (a.room_id, a.bed_id)
+                a.room_id,
+                a.bed_id,
+                UPPER(REPLACE(ht.task_status, ' ', '_')) AS task_status
+              FROM housekeeping_tasks ht
+              INNER JOIN allotments a
+                ON a.id = ht.allotment_id
+              INNER JOIN rooms r
+                ON r.id = a.room_id
+              WHERE
+                r.is_active = TRUE
+                AND r.room_usage = 'GUEST'
+              ORDER BY
+                a.room_id,
+                a.bed_id,
+                COALESCE(ht.completed_at, ht.assigned_at) DESC,
+                ht.id DESC
+            )
+            SELECT COUNT(*)::INTEGER
+            FROM latest_units
+            WHERE task_status = 'CLEANING'
+          ) +
+          (
+            SELECT COUNT(*)::INTEGER
             FROM beds b
             INNER JOIN rooms r
               ON r.id = b.room_id
@@ -164,13 +238,20 @@ router.get("/summary", async (req, res) => {
               AND r.is_active = TRUE
               AND r.room_usage = 'GUEST'
               AND UPPER(b.bed_status) = 'CLEANING'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM housekeeping_tasks ht
+                INNER JOIN allotments a
+                  ON a.id = ht.allotment_id
+                WHERE a.room_id = b.room_id
+                  AND a.bed_id = b.id
+              )
           ) +
           (
-            SELECT COUNT(*)
-            FROM (
+            WITH latest_room_tasks AS (
               SELECT DISTINCT ON (a.room_id)
-                UPPER(REPLACE(ht.task_status, ' ', '_'))
-                  AS task_status
+                a.room_id,
+                UPPER(REPLACE(ht.task_status, ' ', '_')) AS task_status
               FROM housekeeping_tasks ht
               INNER JOIN allotments a
                 ON a.id = ht.allotment_id
@@ -179,15 +260,68 @@ router.get("/summary", async (req, res) => {
               WHERE
                 a.bed_id IS NULL
                 AND r.is_active = TRUE
+                AND r.room_usage = 'GUEST'
               ORDER BY
                 a.room_id,
-                ht.assigned_at DESC,
+                COALESCE(ht.completed_at, ht.assigned_at) DESC,
                 ht.id DESC
-            ) latest_room_tasks
+            )
+            SELECT COUNT(*)
+            FROM latest_room_tasks
             WHERE task_status = 'CLEANING'
+          ) +
+          (
+            SELECT COUNT(*)
+            FROM rooms r
+            WHERE
+              r.is_active = TRUE
+              AND r.room_usage = 'GUEST'
+              AND UPPER(r.room_status) = 'CLEANING'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM housekeeping_tasks ht
+                INNER JOIN allotments a
+                  ON a.id = ht.allotment_id
+                WHERE a.room_id = r.id
+                  AND a.bed_id IS NULL
+              )
           )
         )::INTEGER AS cleaning_beds
 
+    `);
+
+    const todayCheckoutsResult = await pool.query(`
+      SELECT DISTINCT
+        a.id AS allotment_id,
+        r.room_number,
+        bd.bed_number,
+        NULLIF(wp.progress_data ->> 'expected_check_out_time', '')
+          AS expected_checkout_time
+      FROM allotments a
+      INNER JOIN bookings b
+        ON b.id = a.booking_id
+      LEFT JOIN booking_workflow_progress wp
+        ON wp.booking_id = b.id
+      INNER JOIN check_ins ci
+        ON ci.allotment_id = a.id
+      INNER JOIN rooms r
+        ON r.id = a.room_id
+      LEFT JOIN beds bd
+        ON bd.id = a.bed_id
+      LEFT JOIN check_outs co
+        ON co.allotment_id = a.id
+      WHERE
+        a.allotment_status = 'ALLOTTED'
+        AND b.expected_check_out_date =
+          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::DATE
+        AND ci.check_in_time <=
+          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+        AND co.id IS NULL
+      ORDER BY
+        expected_checkout_time ASC NULLS LAST,
+        r.room_number ASC,
+        bd.bed_number ASC NULLS FIRST,
+        a.id ASC
     `);
 
 
@@ -471,6 +605,9 @@ router.get("/summary", async (req, res) => {
 
       recentBookings:
         recentBookingsResult.rows,
+
+      todayCheckouts:
+        todayCheckoutsResult.rows,
     });
 
   } catch (error) {

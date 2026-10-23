@@ -6,6 +6,7 @@ import {
 } from "react";
 
 import "../App.css";
+import BrandLogo from "../components/BrandLogo";
 import { apiFetch } from "../api";
 
 import type { User } from "../App";
@@ -502,9 +503,7 @@ function Approval({
 
       <header className="modern-dashboard-header">
         <div className="modern-brand">
-          <div className="modern-brand-mark">
-            ESM
-          </div>
+          <BrandLogo className="modern-brand-mark" />
 
           <div className="modern-brand-text">
             <h1>ESM REST HOUSE</h1>

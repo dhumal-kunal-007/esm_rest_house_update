@@ -239,7 +239,9 @@ function RoomCustomizations({ onBack }: RoomCustomizationsProps) {
           type="button"
           className="room-customizations-refresh"
           onClick={() => void loadRooms()}
-          disabled={loading || savingRoomId !== null}
+          disabled={
+            loading || savingRoomId !== null
+          }
         >
           {tr("Refresh", "रीफ्रेश")}
         </button>

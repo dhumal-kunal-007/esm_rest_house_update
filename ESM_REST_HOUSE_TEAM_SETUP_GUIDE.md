@@ -775,6 +775,11 @@ Apply `20261019_weekly_monthly_report_snapshots.sql` after the daily snapshot
 migration to enable Monday-Sunday weekly and calendar-month reports, generated
 at 9:00 PM on Sunday and the final day of each month. The monthly report also
 shows collected CASH and UPI totals for that month.
+Apply `20261029_delayed_checkout_charges.sql` and then
+`20261030_shared_delayed_checkout_rates.sql` to enable Admin-configured delayed
+check-out fines. Configure one shared rate each for AC, NAC, DM/Hall beds, and
+VIP in Customize Room and Rates. A 20-minute grace period applies; each started
+hour after it is charged and included in the booking's final bill.
 The whole-room allotment index allows each accepted guest to receive an active
 allotment in the same room while the room-lock flow continues to prevent
 overlapping bookings.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api";
 import AppModal from "../components/AppModal";
+import BrandLogo from "../components/BrandLogo";
 import { useLanguage } from "../i18n/LanguageContext";
 import type { User } from "../App";
 
@@ -689,6 +690,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
       {report && !loading && (
         <article className="daily-report-printable">
           <header className="daily-report-sheet-header">
+            <BrandLogo className="daily-report-sheet-logo" />
             <h1>
               {language === "mr"
                 ? `ESM विश्रामगृह ${reportTypeMarathi} अहवाल`
@@ -915,6 +917,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
       {annualReport && reportType === "ANNUAL" && !loading && (
         <article className="daily-report-printable annual-report-printable">
           <header className="daily-report-sheet-header">
+            <BrandLogo className="daily-report-sheet-logo" />
             <h1>
               {language === "mr"
                 ? "ESM विश्रामगृह वार्षिक आर्थिक अहवाल"
@@ -1023,6 +1026,7 @@ function DailyReport({ user, onBack }: DailyReportProps) {
       {paymentPrint && (report || annualReport) && (
         <article className="daily-report-payment-printable">
           <header className="daily-report-payment-print-header">
+            <BrandLogo className="daily-report-payment-print-logo" />
             <h1>
               {language === "mr"
                 ? `ESM विश्रामगृह · ${paymentPrint.method === "CASH" ? "रोख" : "UPI"} जमा व्यवहार`

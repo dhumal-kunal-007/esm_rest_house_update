@@ -1,8 +1,52 @@
 import express, { Request, Response } from "express";
+import type { PoolClient } from "pg";
 import { pool } from "../config/db.js";
+import { calculateDelayedCheckoutFine } from "../services/delayedCheckoutFine.js";
 import { validateLegacyBillRateOverride } from "../services/legacyBillRateValidation.js";
 
 const router = express.Router();
+
+const getBillPaymentSummary = async (
+  client: PoolClient,
+  bookingId: string,
+  billAmount: number
+) => {
+  const result = await client.query(
+    `
+    SELECT
+      COALESCE(
+        SUM(amount) FILTER (
+          WHERE UPPER(payment_status) IN ('SUCCESS', 'COMPLETED', 'PAID', 'RECEIVED')
+        ),
+        0
+      ) AS total_paid,
+      STRING_AGG(
+        DISTINCT payment_method,
+        ', '
+        ORDER BY payment_method
+      ) FILTER (
+        WHERE UPPER(payment_status) IN ('SUCCESS', 'COMPLETED', 'PAID', 'RECEIVED')
+      ) AS payment_methods
+    FROM payments
+    WHERE booking_id = $1
+    `,
+    [bookingId]
+  );
+
+  const totalPaid = Number(result.rows[0].total_paid) || 0;
+  const paymentStatus =
+    billAmount > 0 && totalPaid + 0.01 >= billAmount
+      ? "PAID"
+      : totalPaid > 0
+        ? "PARTIALLY PAID"
+        : "PENDING";
+
+  return {
+    payment_status: paymentStatus,
+    payment_method: result.rows[0].payment_methods ?? null,
+    amount_paid: totalPaid,
+  };
+};
 
 /*
 =========================================================
@@ -221,11 +265,20 @@ router.post(
         );
 
       if (existingBillResult.rows.length > 0) {
+        const existingBill = existingBillResult.rows[0];
+        const paymentSummary = await getBillPaymentSummary(
+          client,
+          booking_id,
+          Number(existingBill.total_amount)
+        );
         await client.query("ROLLBACK");
 
         res.status(200).json({
           message: "A bill already exists for this check-out.",
-          bill: existingBillResult.rows[0],
+          bill: {
+            ...existingBill,
+            ...paymentSummary,
+          },
         });
 
         return;
@@ -494,6 +547,14 @@ router.post(
             MAX(acceptance.guest_type) AS guest_type,
             MIN(ci.check_in_time AT TIME ZONE 'Asia/Kolkata')::date AS check_in_date,
             MAX(co.check_out_time AT TIME ZONE 'Asia/Kolkata')::date AS check_out_date,
+            TO_CHAR(
+              MIN(ci.check_in_time AT TIME ZONE 'Asia/Kolkata'),
+              'DD/MM/YYYY HH12:MI AM'
+            ) AS check_in_at,
+            TO_CHAR(
+              MAX(co.check_out_time AT TIME ZONE 'Asia/Kolkata'),
+              'DD/MM/YYYY HH12:MI AM'
+            ) AS check_out_at,
             MAX(
               COALESCE(
                 legacy_rate.daily_rate,
@@ -557,6 +618,10 @@ router.post(
                 'bed_number', bed_number,
                 'guest_name', guest_name,
                 'guest_type', guest_type,
+                'check_in_date', check_in_date,
+                'check_out_date', check_out_date,
+                'check_in_at', check_in_at,
+                'check_out_at', check_out_at,
                 'daily_rate', daily_rate,
                 'stay_days', GREATEST(1, check_out_date - check_in_date),
                 'amount',
@@ -603,6 +668,88 @@ router.post(
       const billedAverageRate =
         roomCharges / accommodationUnitDays;
 
+      const delayedCheckoutResult = await client.query(
+        `
+        WITH unit_checkout_rows AS (
+          SELECT
+            CASE
+              WHEN a.bed_id IS NULL THEN 'ROOM:' || a.room_id::text
+              ELSE 'BED:' || a.bed_id::text
+            END AS unit_key,
+            MAX(room.room_number) AS room_number,
+            MAX(bed.bed_number) AS bed_number,
+            MAX(co.check_out_time) AS actual_checkout_at,
+            MAX(co.delayed_checkout_hourly_rate) AS hourly_rate,
+            (
+              (
+                b.expected_check_out_date
+                + COALESCE(
+                    NULLIF(
+                      wp.progress_data ->> 'expected_check_out_time',
+                      ''
+                    )::time,
+                    TIME '13:00'
+                  )
+              ) AT TIME ZONE 'Asia/Kolkata'
+            ) AS expected_checkout_at
+          FROM check_outs co
+          INNER JOIN allotments a ON a.id = co.allotment_id
+          INNER JOIN bookings b ON b.id = co.booking_id
+          LEFT JOIN booking_workflow_progress wp
+            ON wp.booking_id = b.id
+          LEFT JOIN rooms room ON room.id = a.room_id
+          LEFT JOIN beds bed ON bed.id = a.bed_id
+          WHERE co.booking_id = $1
+            AND co.checkout_type = 'DELAYED_CHECKOUT'
+          GROUP BY
+            1,
+            a.room_id,
+            a.bed_id,
+            b.expected_check_out_date,
+            wp.progress_data ->> 'expected_check_out_time'
+        )
+        SELECT
+          unit_key,
+          room_number,
+          bed_number,
+          expected_checkout_at,
+          actual_checkout_at,
+          hourly_rate
+        FROM unit_checkout_rows
+        ORDER BY unit_key
+        `,
+        [booking_id]
+      );
+      const delayedCheckoutUnits = delayedCheckoutResult.rows.map(
+        (unit: {
+          unit_key: string;
+          room_number: string;
+          bed_number: number | null;
+          expected_checkout_at: Date | string;
+          actual_checkout_at: Date | string;
+          hourly_rate: number | string;
+        }) => {
+          const hourlyRate = Number(unit.hourly_rate);
+          const fine = calculateDelayedCheckoutFine(
+            unit.expected_checkout_at,
+            unit.actual_checkout_at,
+            hourlyRate
+          );
+          return {
+            unit_key: unit.unit_key,
+            room_number: unit.room_number,
+            bed_number: unit.bed_number,
+            billable_hours: fine.billableHours,
+            hourly_rate: hourlyRate,
+            amount: fine.amount,
+          };
+        }
+      );
+      const delayedCheckoutCharges = delayedCheckoutUnits.reduce(
+        (total, unit) => total + unit.amount,
+        0
+      );
+
       /*
       =====================================================
       10. ADDITIONAL PERSON CHARGES
@@ -628,7 +775,8 @@ router.post(
 
       const otherCharges =
         additionalPersonCharges +
-        otherRelationCharges;
+        otherRelationCharges +
+        delayedCheckoutCharges;
 
       /*
       =====================================================
@@ -657,6 +805,11 @@ router.post(
         foodCharges +
         otherCharges -
         discountAmount;
+      const paymentSummary = await getBillPaymentSummary(
+        client,
+        booking_id,
+        totalAmount
+      );
 
       /*
       =====================================================
@@ -771,7 +924,10 @@ router.post(
           "Bill generated successfully.",
 
         bill:
-          billInsertResult.rows[0],
+          {
+            ...billInsertResult.rows[0],
+            ...paymentSummary,
+          },
 
         details: {
           pricing_source:
@@ -856,6 +1012,12 @@ router.post(
 
           other_relation_charges:
             otherRelationCharges,
+
+          delayed_checkout_charges:
+            delayedCheckoutCharges,
+
+          delayed_checkout_units:
+            delayedCheckoutUnits,
 
           food_charges:
             foodCharges,

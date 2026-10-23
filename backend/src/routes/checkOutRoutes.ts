@@ -32,7 +32,13 @@ router.get(
                     a.bed_id,
                     bd.bed_number,
                     b.check_in_date,
-                    b.expected_check_out_date
+                    b.expected_check_out_date,
+                    EXISTS (
+                        SELECT 1
+                        FROM check_outs delayed_co
+                        WHERE delayed_co.booking_id = b.id
+                          AND delayed_co.checkout_type = 'DELAYED_CHECKOUT'
+                    ) AS has_delayed_checkout
                 FROM bookings b
                 INNER JOIN check_outs co
                     ON co.booking_id = b.id
@@ -116,9 +122,30 @@ router.get(
                     a.bed_id,
                     bd.bed_number,
                     bd.bed_status,
+                    delayed_rate.hourly_rate
+                        AS delayed_checkout_hourly_rate,
 
                     b.check_in_date,
                     b.expected_check_out_date,
+                    (
+                        CURRENT_TIMESTAMP >
+                        (
+                            (
+                                b.expected_check_out_date
+                                + COALESCE(
+                                    NULLIF(
+                                        wp.progress_data ->> 'expected_check_out_time',
+                                        ''
+                                    )::time,
+                                    TIME '13:00'
+                                )
+                            ) AT TIME ZONE 'Asia/Kolkata'
+                        ) + INTERVAL '20 minutes'
+                    ) AS is_late_checkout,
+                    NULLIF(
+                        wp.progress_data ->> 'expected_check_out_time',
+                        ''
+                    ) AS expected_check_out_time,
                     (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
                         < b.expected_check_out_date AS is_early_checkout,
 
@@ -166,6 +193,8 @@ router.get(
                 LEFT JOIN booking_pricing bp
                     ON bp.booking_id = b.id
 
+                LEFT JOIN booking_workflow_progress wp
+                    ON wp.booking_id = b.id
                 INNER JOIN check_ins ci
                     ON ci.allotment_id = a.id
 
@@ -174,6 +203,25 @@ router.get(
 
                 INNER JOIN rooms r
                     ON r.id = a.room_id
+                INNER JOIN room_categories rc
+                    ON rc.id = r.category_id
+
+                LEFT JOIN delayed_checkout_rate_cards delayed_rate
+                    ON delayed_rate.rate_category = CASE
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              IN ('DM', 'DORMITORY', 'HALL')
+                            OR UPPER(rc.category_name) LIKE '%DORMITORY%'
+                            THEN 'DM_BED'
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              LIKE '%VIP%'
+                            THEN 'VIP'
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              IN ('NAC', 'NON_AC')
+                            THEN 'NAC'
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              = 'AC'
+                            THEN 'AC'
+                    END
 
                 LEFT JOIN beds bd
                     ON bd.id = a.bed_id
@@ -223,7 +271,7 @@ router.post(
             !booking_id ||
             !room_id ||
             !checked_out_by ||
-            !["SCHEDULED", "PRE_CHECKOUT"].includes(checkout_type)
+            !["SCHEDULED", "PRE_CHECKOUT", "DELAYED_CHECKOUT"].includes(checkout_type)
         ) {
             res.status(400).json({
                 message: "booking_id, room_id, checked_out_by and a valid checkout_type are required.",
@@ -265,14 +313,77 @@ router.post(
                 return;
             }
 
-            await client.query("SELECT id FROM rooms WHERE id = $1 FOR UPDATE", [room_id]);
+            let delayedCheckoutHourlyRate: number | null = null;
+            if (checkout_type === "DELAYED_CHECKOUT") {
+                const rateResult = await client.query(
+                    `
+                    SELECT rate_card.hourly_rate
+                    FROM rooms room
+                    INNER JOIN room_categories category
+                        ON category.id = room.category_id
+                    LEFT JOIN delayed_checkout_rate_cards rate_card
+                        ON rate_card.rate_category = CASE
+                            WHEN UPPER(REPLACE(REPLACE(TRIM(category.category_name), '-', '_'), ' ', '_'))
+                                  IN ('DM', 'DORMITORY', 'HALL')
+                                OR UPPER(category.category_name) LIKE '%DORMITORY%'
+                                THEN 'DM_BED'
+                            WHEN UPPER(REPLACE(REPLACE(TRIM(category.category_name), '-', '_'), ' ', '_'))
+                                  LIKE '%VIP%'
+                                THEN 'VIP'
+                            WHEN UPPER(REPLACE(REPLACE(TRIM(category.category_name), '-', '_'), ' ', '_'))
+                                  IN ('NAC', 'NON_AC')
+                                THEN 'NAC'
+                            WHEN UPPER(REPLACE(REPLACE(TRIM(category.category_name), '-', '_'), ' ', '_'))
+                                  = 'AC'
+                                THEN 'AC'
+                        END
+                    WHERE room.id = $1
+                    FOR UPDATE OF room
+                    `,
+                    [room_id]
+                );
+                const roomHourlyRate = Number(
+                    rateResult.rows[0]?.hourly_rate
+                );
+                if (
+                    !Number.isFinite(roomHourlyRate) ||
+                    roomHourlyRate <= 0
+                ) {
+                    await client.query("ROLLBACK");
+                    res.status(409).json({
+                        message: "Set the shared delayed check-out rate for this room category in Admin Customize Room and Rates before using Delayed Check-Out.",
+                    });
+                    return;
+                }
+                delayedCheckoutHourlyRate = roomHourlyRate;
+            }
             const bookingResult = await client.query(
                 `
-                SELECT id, expected_check_out_date,
-                    (CURRENT_DATE < expected_check_out_date) AS is_early_checkout
-                FROM bookings
-                WHERE id = $1
-                FOR UPDATE
+                SELECT b.id, b.expected_check_out_date,
+                    (
+                        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
+                            < b.expected_check_out_date
+                    ) AS is_early_checkout,
+                    (
+                        CURRENT_TIMESTAMP >
+                        (
+                            (
+                                b.expected_check_out_date
+                                + COALESCE(
+                                    NULLIF(
+                                        wp.progress_data ->> 'expected_check_out_time',
+                                        ''
+                                    )::time,
+                                    TIME '13:00'
+                                )
+                            ) AT TIME ZONE 'Asia/Kolkata'
+                        ) + INTERVAL '20 minutes'
+                    ) AS is_late_checkout
+                FROM bookings b
+                LEFT JOIN booking_workflow_progress wp
+                    ON wp.booking_id = b.id
+                WHERE b.id = $1
+                FOR UPDATE OF b
                 `,
                 [booking_id]
             );
@@ -299,6 +410,16 @@ router.post(
             );
             const isFinalBookingCheckout =
                 Number(otherGroupsResult.rows[0].remaining_group_count) === 0;
+            if (
+                bookingResult.rows[0].is_late_checkout &&
+                checkout_type !== "DELAYED_CHECKOUT"
+            ) {
+                await client.query("ROLLBACK");
+                res.status(400).json({
+                    message: "The guest is more than 20 minutes past the scheduled check-out time. Select Delayed Check-Out to include the hourly fine in the final bill.",
+                });
+                return;
+            }
 
             const priorEarlyCheckoutResult = await client.query(
                 `
@@ -385,12 +506,21 @@ router.post(
                 const checkoutResult = await client.query(
                     `
                     INSERT INTO check_outs (
-                        booking_id, guest_id, allotment_id, check_out_time, checked_out_by, remarks
+                        booking_id, guest_id, allotment_id, check_out_time, checked_out_by, remarks, checkout_type,
+                        delayed_checkout_hourly_rate
                     )
-                    VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5)
+                    VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6, $7)
                     RETURNING id, booking_id, guest_id, allotment_id, check_out_time, checked_out_by, remarks
                     `,
-                    [booking_id, allotment.guest_id, allotment.allotment_id, checked_out_by, remarks || null]
+                    [
+                        booking_id,
+                        allotment.guest_id,
+                        allotment.allotment_id,
+                        checked_out_by,
+                        remarks || null,
+                        checkout_type,
+                        delayedCheckoutHourlyRate,
+                    ]
                 );
                 checkouts.push(checkoutResult.rows[0]);
             }
@@ -506,7 +636,7 @@ router.post(
             !guest_id ||
             !allotment_id ||
             !checked_out_by ||
-            !["SCHEDULED", "PRE_CHECKOUT"].includes(
+            !["SCHEDULED", "PRE_CHECKOUT", "DELAYED_CHECKOUT"].includes(
                 checkout_type
             )
         ) {
@@ -535,17 +665,38 @@ router.post(
                     a.room_id,
                     a.bed_id,
                     a.allotment_status,
-
-                    r.room_number
+                    r.room_number,
+                    delayed_rate.hourly_rate
+                        AS delayed_checkout_hourly_rate
 
                 FROM allotments a
 
                 INNER JOIN rooms r
                     ON r.id = a.room_id
+                INNER JOIN room_categories rc
+                    ON rc.id = r.category_id
+                LEFT JOIN beds bd
+                    ON bd.id = a.bed_id
+                LEFT JOIN delayed_checkout_rate_cards delayed_rate
+                    ON delayed_rate.rate_category = CASE
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              IN ('DM', 'DORMITORY', 'HALL')
+                            OR UPPER(rc.category_name) LIKE '%DORMITORY%'
+                            THEN 'DM_BED'
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              LIKE '%VIP%'
+                            THEN 'VIP'
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              IN ('NAC', 'NON_AC')
+                            THEN 'NAC'
+                        WHEN UPPER(REPLACE(REPLACE(TRIM(rc.category_name), '-', '_'), ' ', '_'))
+                              = 'AC'
+                            THEN 'AC'
+                    END
 
                 WHERE a.id = $1
 
-                FOR UPDATE
+                FOR UPDATE OF a
                 `,
                 [allotment_id]
             );
@@ -561,6 +712,20 @@ router.post(
             }
 
             const allotment = allotmentResult.rows[0];
+
+            const delayedRate = Number(
+                allotment.delayed_checkout_hourly_rate
+            );
+            if (
+                checkout_type === "DELAYED_CHECKOUT" &&
+                (!Number.isFinite(delayedRate) || delayedRate <= 0)
+            ) {
+                await client.query("ROLLBACK");
+                res.status(409).json({
+                    message: "Set the shared delayed check-out rate for this room category in Admin Customize Room and Rates before using Delayed Check-Out.",
+                });
+                return;
+            }
 
             /*
              * VERIFY ACTIVE ALLOTMENT
@@ -693,10 +858,27 @@ router.post(
                         expected_check_out_date,
                         (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
                             < expected_check_out_date
-                            AS is_early_checkout
-                    FROM bookings
-                    WHERE id = $1
-                    FOR UPDATE
+                            AS is_early_checkout,
+                        (
+                            CURRENT_TIMESTAMP >
+                            (
+                                (
+                                    b.expected_check_out_date
+                                    + COALESCE(
+                                        NULLIF(
+                                            wp.progress_data ->> 'expected_check_out_time',
+                                            ''
+                                        )::time,
+                                        TIME '13:00'
+                                    )
+                                ) AT TIME ZONE 'Asia/Kolkata'
+                            ) + INTERVAL '20 minutes'
+                        ) AS is_late_checkout
+                    FROM bookings b
+                    LEFT JOIN booking_workflow_progress wp
+                        ON wp.booking_id = b.id
+                    WHERE b.id = $1
+                    FOR UPDATE OF b
                     `,
                     [booking_id]
                 );
@@ -704,6 +886,16 @@ router.post(
             const isEarlyByDate =
                 earlyCheckoutResult.rows[0]
                     ?.is_early_checkout;
+            if (
+                earlyCheckoutResult.rows[0]?.is_late_checkout &&
+                checkout_type !== "DELAYED_CHECKOUT"
+            ) {
+                await client.query("ROLLBACK");
+                res.status(400).json({
+                    message: "The guest is more than 20 minutes past the scheduled check-out time. Select Delayed Check-Out to include the hourly fine in the final bill.",
+                });
+                return;
+            }
 
             const remainingBookingGuestsResult =
                 await client.query(
@@ -856,7 +1048,9 @@ router.post(
                         allotment_id,
                         check_out_time,
                         checked_out_by,
-                        remarks
+                        remarks,
+                        checkout_type,
+                        delayed_checkout_hourly_rate
                     )
 
                     VALUES (
@@ -865,7 +1059,9 @@ router.post(
                         $3,
                         CURRENT_TIMESTAMP,
                         $4,
-                        $5
+                        $5,
+                        $6,
+                        $7
                     )
 
                     RETURNING
@@ -883,6 +1079,10 @@ router.post(
                         allotment_id,
                         checked_out_by,
                         remarks || null,
+                        checkout_type,
+                        checkout_type === "DELAYED_CHECKOUT"
+                            ? Number(allotment.delayed_checkout_hourly_rate)
+                            : null,
                     ]
                 );
 

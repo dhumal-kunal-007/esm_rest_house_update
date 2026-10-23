@@ -19,6 +19,47 @@ interface RoomRateCard {
   is_under_maintenance: boolean;
 }
 
+type DelayedCheckoutRateCategory = "AC" | "NAC" | "DM_BED" | "VIP";
+
+type DelayedCheckoutRateDraft = Record<DelayedCheckoutRateCategory, string>;
+
+const delayedCheckoutRateCategories: Array<{
+  key: DelayedCheckoutRateCategory;
+  title: string;
+  titleMr: string;
+  appliesTo: string;
+  appliesToMr: string;
+}> = [
+  {
+    key: "AC",
+    title: "AC",
+    titleMr: "AC",
+    appliesTo: "All AC rooms",
+    appliesToMr: "सर्व AC खोल्या",
+  },
+  {
+    key: "NAC",
+    title: "NAC",
+    titleMr: "NAC",
+    appliesTo: "All NAC rooms",
+    appliesToMr: "सर्व NAC खोल्या",
+  },
+  {
+    key: "DM_BED",
+    title: "DM / Hall beds",
+    titleMr: "DM / Hall बेड",
+    appliesTo: "Every bed in all DM rooms and Halls",
+    appliesToMr: "सर्व DM खोल्या आणि Hall मधील प्रत्येक बेड",
+  },
+  {
+    key: "VIP",
+    title: "VIP",
+    titleMr: "VIP",
+    appliesTo: "All VIP rooms",
+    appliesToMr: "सर्व VIP खोल्या",
+  },
+];
+
 type EditableRateField =
   | "room_capacity"
   | "bed_capacity"
@@ -132,6 +173,13 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
     isMarathi ? marathi : english;
 
   const [rooms, setRooms] = useState<RoomRateCard[]>([]);
+  const [delayedCheckoutRates, setDelayedCheckoutRates] =
+    useState<DelayedCheckoutRateDraft>({
+      AC: "0",
+      NAC: "0",
+      DM_BED: "0",
+      VIP: "0",
+    });
   const [identityDrafts, setIdentityDrafts] = useState<
     Record<string, { room_number: string; category: "AC" | "NAC" | "DM" }>
   >({});
@@ -151,17 +199,40 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
 
     const loadRates = async () => {
       try {
-        const response = await apiFetch(
-          "http://localhost:5000/api/rooms/rate-card"
-        );
-        const data = await response.json();
+        const [response, delayedRatesResponse] = await Promise.all([
+          apiFetch("http://localhost:5000/api/rooms/rate-card"),
+          apiFetch("http://localhost:5000/api/rooms/delayed-checkout-rates"),
+        ]);
+        const [data, delayedRatesData] = await Promise.all([
+          response.json(),
+          delayedRatesResponse.json(),
+        ]);
         if (!response.ok || !data.success) {
           throw new Error(data.message || "Unable to load room rates.");
+        }
+        if (
+          !delayedRatesResponse.ok ||
+          !delayedRatesData.success ||
+          typeof delayedRatesData.rates !== "object" ||
+          delayedRatesData.rates === null
+        ) {
+          throw new Error(
+            delayedRatesData.message ||
+              "Unable to load delayed check-out rates."
+          );
         }
         if (!cancelled) {
           const loadedRooms: RoomRateCard[] = Array.isArray(data.rooms)
             ? data.rooms
             : [];
+          setDelayedCheckoutRates(
+            Object.fromEntries(
+              delayedCheckoutRateCategories.map(({ key }) => [
+                key,
+                String(delayedRatesData.rates[key] ?? 0),
+              ])
+            ) as DelayedCheckoutRateDraft
+          );
           setRooms(
             loadedRooms.sort((a, b) =>
               a.room_number.localeCompare(b.room_number, undefined, {
@@ -300,6 +371,67 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
         saveError instanceof Error
           ? saveError.message
           : "Unable to save room settings."
+      );
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const saveDelayedCheckoutRates = async () => {
+    const draft = delayedCheckoutRates;
+    if (
+      delayedCheckoutRateCategories.some(({ key }) =>
+        !draft[key].trim() ||
+        !Number.isFinite(Number(draft[key])) ||
+        Number(draft[key]) < 0
+      )
+    ) {
+      setError(
+        tr(
+          "Enter a valid non-negative rate for every category.",
+          "प्रत्येक प्रकारासाठी शून्य किंवा त्यापेक्षा जास्त योग्य दर भरा."
+        )
+      );
+      return;
+    }
+
+    const key = "delayed-checkout-rates";
+    setSavingKey(key);
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiFetch(
+        "http://localhost:5000/api/rooms/delayed-checkout-rates",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rates: Object.fromEntries(
+              delayedCheckoutRateCategories.map(({ key: category }) => [
+                category,
+                Number(draft[category]),
+              ])
+            ),
+          }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message || "Unable to save delayed check-out rates."
+        );
+      }
+      setMessage(
+        tr(
+          "Saved shared delayed check-out rates.",
+          "सामायिक उशिरा चेक-आउटचे दर जतन केले."
+        )
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save delayed check-out rates."
       );
     } finally {
       setSavingKey(null);
@@ -773,6 +905,82 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
             <strong>{tr("No active rooms found", "सक्रिय खोल्या सापडल्या नाहीत")}</strong>
           </div>
         ) : (
+          <>
+          <section className="customize-rate-category">
+            <header className="customize-rate-category-heading">
+              <div>
+                <span>{tr("ADMIN CONFIGURATION", "प्रशासकीय सेटिंग")}</span>
+                <h2>{tr("Delayed Check-Out Fine Rates", "उशिरा चेक-आउट दंडाचे दर")}</h2>
+              </div>
+              <small>{tr("One shared rate for each category · per started hour", "प्रत्येक प्रकारासाठी एक सामायिक दर · सुरू झालेल्या प्रत्येक तासासाठी")}</small>
+            </header>
+            <p className="customize-rates-notice">
+              {tr(
+                "No fine during the first 20 minutes after the scheduled checkout time. After that, every started hour is charged at the configured rate.",
+                "अपेक्षित चेक-आउट वेळेनंतर पहिल्या 20 मिनिटांत दंड नाही. त्यानंतर सुरू झालेला प्रत्येक तास ठरवलेल्या दराने आकारला जाईल."
+              )}
+            </p>
+            <div className="customize-rate-grid">
+              {delayedCheckoutRateCategories.map((category) => (
+                  <article className="customize-rate-card" key={category.key}>
+                    <div className="customize-rate-card-heading">
+                      <div className="customize-rate-room-mark" aria-hidden="true">
+                        {category.key === "DM_BED" ? "DM" : category.title}
+                      </div>
+                      <div>
+                        <span>{tr("SHARED DELAYED CHECK-OUT RATE", "सामायिक उशिरा चेक-आउट दर")}</span>
+                        <h3>{isMarathi ? category.titleMr : category.title}</h3>
+                      </div>
+                    </div>
+                    <div className="customize-rate-fields">
+                      <label className="customize-rate-field">
+                        <span>{tr("Fine per started hour (₹)", "सुरू झालेल्या प्रत्येक तासाचा दंड (₹)")}</span>
+                        <span className="customize-rate-input-wrap">
+                          <span>₹</span>
+                          <input
+                            aria-label={`${category.title} shared delayed checkout hourly rate`}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={delayedCheckoutRates[category.key]}
+                            onChange={(event) =>
+                              setDelayedCheckoutRates((current) => ({
+                                ...current,
+                                [category.key]: event.target.value,
+                              }))
+                            }
+                          />
+                        </span>
+                      </label>
+                    </div>
+                    <div className="customize-rate-card-footer">
+                      <span>
+                        {tr(category.appliesTo, category.appliesToMr)}
+                        {" · "}
+                        {tr("20-minute grace period", "20 मिनिटांचा grace period")}
+                      </span>
+                    </div>
+                  </article>
+                ))}
+            </div>
+            <div className="customize-rate-card-footer">
+              <span>
+                {tr(
+                  "Each category rate applies to every room or bed listed on its card.",
+                  "प्रत्येक प्रकारचा दर त्या कार्डवर नमूद केलेल्या सर्व खोल्या किंवा बेडला लागू होईल."
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => void saveDelayedCheckoutRates()}
+                disabled={savingKey !== null}
+              >
+                {savingKey === "delayed-checkout-rates"
+                  ? tr("Saving…", "जतन होत आहे...")
+                  : tr("Save shared fine rates", "सामायिक दंडाचे दर जतन करा")}
+              </button>
+            </div>
+          </section>
           <div className="customize-rate-sections">
             {groupedRooms.map(({ group, rooms: groupRooms }) => (
               <section className={`customize-rate-category category-${group.toLowerCase()}`} key={group}>
@@ -979,6 +1187,7 @@ function CustomizeRates({ onBack }: CustomizeRatesProps) {
               </section>
             ))}
           </div>
+          </>
         )}
       </section>
     </main>

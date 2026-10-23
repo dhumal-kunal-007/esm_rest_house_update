@@ -4,6 +4,7 @@ import {
 } from "react";
 
 import "../App.css";
+import BrandLogo from "../components/BrandLogo";
 import { apiFetch } from "../api";
 
 import type {
@@ -822,9 +823,7 @@ function OtherAuthorityRooms({
       <main className="dashboard-screen">
         <header className="dashboard-header">
           <div className="dashboard-brand">
-            <div className="dashboard-logo">
-              ESM
-            </div>
+            <BrandLogo className="dashboard-logo" />
 
             <div>
               <h1>
@@ -876,9 +875,7 @@ function OtherAuthorityRooms({
 
       <header className="dashboard-header">
         <div className="dashboard-brand">
-          <div className="dashboard-logo">
-            ESM
-          </div>
+          <BrandLogo className="dashboard-logo" />
 
           <div>
             <h1>

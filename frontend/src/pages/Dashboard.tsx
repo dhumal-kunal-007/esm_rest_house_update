@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import "../App.css";
 import { apiFetch } from "../api";
 import AppModal from "../components/AppModal";
+import BrandLogo from "../components/BrandLogo";
 
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -67,11 +68,35 @@ interface RecentBooking {
   resume_step: string | null;
 }
 
+interface TodayCheckout {
+  allotment_id: string;
+  room_number: string;
+  bed_number: number | null;
+  expected_checkout_time: string | null;
+}
+
+const formatCheckoutTime = (
+  value: string | null,
+  language: string
+): string => {
+  if (!value || !/^\d{2}:\d{2}$/.test(value)) {
+    return language === "mr" ? "वेळ उपलब्ध नाही" : "Time unavailable";
+  }
+
+  const [hours, minutes] = value.split(":").map(Number);
+  const time = new Date(2000, 0, 1, hours, minutes);
+  return time.toLocaleTimeString(language === "mr" ? "mr-IN" : "en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 interface DashboardResponse {
   success: boolean;
   summary: DashboardSummary;
   roomStatus: RoomStatus;
   recentBookings: RecentBooking[];
+  todayCheckouts: TodayCheckout[];
   message?: string;
 }
 
@@ -170,6 +195,26 @@ function Dashboard({
 
   const [recentBookings, setRecentBookings] =
     useState<RecentBooking[]>([]);
+  const [todayCheckouts, setTodayCheckouts] =
+    useState<TodayCheckout[]>([]);
+  const [activeCheckoutIndex, setActiveCheckoutIndex] =
+    useState(0);
+
+  useEffect(() => {
+    if (todayCheckouts.length < 6) {
+      return;
+    }
+
+    const checkoutSlideTimer = window.setInterval(() => {
+      setActiveCheckoutIndex((currentIndex) =>
+        (currentIndex + 1) % todayCheckouts.length
+      );
+    }, 2200);
+
+    return () => {
+      window.clearInterval(checkoutSlideTimer);
+    };
+  }, [todayCheckouts.length]);
 
   const [loading, setLoading] =
     useState(true);
@@ -271,6 +316,14 @@ function Dashboard({
               "Unable to load dashboard information."
           );
         }
+
+        if (!Array.isArray(data.todayCheckouts)) {
+          throw new Error(
+            "Today's checkout information is unavailable."
+          );
+        }
+
+        setTodayCheckouts(data.todayCheckouts);
 
         setSummary({
           totalBookings:
@@ -395,12 +448,18 @@ function Dashboard({
   useEffect(() => {
     loadDashboardData();
 
+    const refreshOnFocus = () => {
+      void loadDashboardData();
+    };
+    window.addEventListener("focus", refreshOnFocus);
+
     const refreshTimer =
       window.setInterval(() => {
         loadDashboardData();
-      }, 30000);
+      }, 10000);
 
     return () => {
+      window.removeEventListener("focus", refreshOnFocus);
       window.clearInterval(
         refreshTimer
       );
@@ -781,9 +840,7 @@ function Dashboard({
 
         <div className="modern-brand">
 
-          <div className="modern-brand-mark">
-            ESM
-          </div>
+          <BrandLogo className="modern-brand-mark" />
 
           <div className="modern-brand-text">
 
@@ -1317,6 +1374,82 @@ function Dashboard({
         {/* ============================================================
             OPERATIONS + ROOM STATUS
         ============================================================ */}
+
+        <section
+          className="dashboard-today-checkouts"
+          aria-label={language === "mr" ? "आजचे चेकआउट" : "Today's checkout"}
+        >
+          <div className="dashboard-today-checkouts-heading">
+            <span className="dashboard-eyebrow">
+              {formattedToday}
+            </span>
+            <h3>
+              {language === "mr" ? "चेकआउट" : "Today's Checkout"}
+            </h3>
+            <strong className="dashboard-today-checkout-count">
+              {loading ? "—" : todayCheckouts.length}
+            </strong>
+          </div>
+          <div className="dashboard-today-checkout-window">
+            {todayCheckouts.length > 0 ? (
+              <div
+                className={`dashboard-today-checkout-track ${
+                  todayCheckouts.length >= 6
+                    ? "is-sliding"
+                    : "is-static"
+                }`}
+                style={{
+                  transform: todayCheckouts.length >= 6
+                    ? `translateX(-${
+                        (activeCheckoutIndex % todayCheckouts.length) * 100
+                      }%)`
+                    : undefined,
+                }}
+              >
+                {todayCheckouts.map((checkout) => (
+                  <div
+                    className="dashboard-today-checkout-slide"
+                    key={checkout.allotment_id}
+                    aria-hidden={
+                      todayCheckouts.length >= 6 &&
+                      checkout.allotment_id !==
+                        todayCheckouts[
+                          activeCheckoutIndex % todayCheckouts.length
+                        ]?.allotment_id
+                    }
+                  >
+                    <span className="dashboard-today-checkout-item">
+                      <span>{checkout.bed_number === null
+                        ? (language === "mr" ? "खोली" : "Room")
+                        : (language === "mr" ? "बेड" : "Bed")}</span>
+                      <strong>
+                        {checkout.room_number}
+                        {checkout.bed_number !== null &&
+                          ` · ${checkout.bed_number}`}
+                      </strong>
+                      <time>
+                        {formatCheckoutTime(
+                          checkout.expected_checkout_time,
+                          language
+                        )}
+                      </time>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="dashboard-today-checkout-empty">
+                {loading
+                  ? language === "mr"
+                    ? "चेकआउट तपशील लोड होत आहेत..."
+                    : "Loading checkout information..."
+                  : language === "mr"
+                    ? "आजसाठी चेकआउट बाकी नाही."
+                    : "No checkouts due today."}
+              </p>
+            )}
+          </div>
+        </section>
 
         <section className="dashboard-main-grid">
 

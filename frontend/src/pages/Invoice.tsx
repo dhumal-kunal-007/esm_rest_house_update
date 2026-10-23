@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import "../App.css";
+import BrandLogo from "../components/BrandLogo";
 
 import { useLanguage } from "../i18n/LanguageContext";
 import type { BedRateDetail } from "./Rate";
@@ -338,9 +339,7 @@ function Invoice({
         key={copyType}
       >
         <header className="invoice-document-header">
-          <div className="invoice-document-brandmark" aria-hidden="true">
-            ESM
-          </div>
+          <BrandLogo className="invoice-document-brandmark" />
           <div className="invoice-document-brand">
             <h2>ESM REST HOUSE</h2>
             <p>{tr("ACCOMMODATION SERVICES", "निवास सेवा")}</p>

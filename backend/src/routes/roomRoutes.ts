@@ -105,6 +105,125 @@ router.get("/rate-card", async (req, res) => {
   }
 });
 
+router.get("/delayed-checkout-rates", async (req, res) => {
+  if (req.authUser?.role !== "ADMIN") {
+    return res.status(403).json({
+      success: false,
+      message: "Only an ADMIN can view delayed check-out rates.",
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT rate_category, hourly_rate
+      FROM delayed_checkout_rate_cards
+      ORDER BY CASE rate_category
+        WHEN 'AC' THEN 1
+        WHEN 'NAC' THEN 2
+        WHEN 'DM_BED' THEN 3
+        WHEN 'VIP' THEN 4
+      END
+      `
+    );
+    const rates = Object.fromEntries(
+      result.rows.map(
+        (row: { rate_category: string; hourly_rate: string | number }) => [
+          row.rate_category,
+          Number(row.hourly_rate),
+        ]
+      )
+    );
+    for (const category of ["AC", "NAC", "DM_BED", "VIP"]) {
+      if (!Number.isFinite(rates[category])) {
+        throw new Error(
+          `Delayed check-out rate for ${category} is missing or invalid.`
+        );
+      }
+    }
+    return res.json({ success: true, rates });
+  } catch (error) {
+    console.error("Delayed check-out rate fetch error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch delayed check-out rates.",
+    });
+  }
+});
+
+router.put("/delayed-checkout-rates", async (req, res) => {
+  if (req.authUser?.role !== "ADMIN") {
+    return res.status(403).json({
+      success: false,
+      message: "Only an ADMIN can update delayed check-out rates.",
+    });
+  }
+
+  const categories = ["AC", "NAC", "DM_BED", "VIP"] as const;
+  const rates = req.body?.rates;
+  const parseRate = (value: unknown): number | null => {
+    if (typeof value !== "number" && typeof value !== "string") {
+      return null;
+    }
+    const rate = Number(value);
+    return Number.isFinite(rate) &&
+      rate >= 0 &&
+      rate <= 9_999_999_999.99
+      ? rate
+      : null;
+  };
+
+  if (
+    typeof rates !== "object" ||
+    rates === null ||
+    Array.isArray(rates) ||
+    categories.some((category) =>
+      parseRate(Reflect.get(rates, category)) === null
+    )
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Valid non-negative hourly rates are required for AC, NAC, DM/Hall beds and VIP.",
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const category of categories) {
+      await client.query(
+        `
+        INSERT INTO delayed_checkout_rate_cards (
+          rate_category, hourly_rate, updated_by, updated_at
+        )
+        VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+        ON CONFLICT (rate_category)
+        DO UPDATE SET
+          hourly_rate = EXCLUDED.hourly_rate,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = CURRENT_TIMESTAMP
+        `,
+        [category, parseRate(Reflect.get(rates, category)), req.authUser!.id]
+      );
+    }
+
+    await client.query("COMMIT");
+    return res.json({
+      success: true,
+      message: "Shared delayed check-out rates saved.",
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Delayed check-out rate update error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to save delayed check-out rates.",
+    });
+  } finally {
+    client.release();
+  }
+});
+
 router.get("/capacities", async (req, res) => {
   const roleName = req.authUser?.role;
   if (!roleName) {

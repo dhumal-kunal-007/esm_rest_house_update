@@ -14,6 +14,7 @@ import {
 } from "./api";
 
 import AppModal from "./components/AppModal";
+import BrandLogo from "./components/BrandLogo";
 
 import type {
   AppModalType,
@@ -3231,9 +3232,10 @@ const handleRoomLockedContinue = async (
           <div className="modern-splash-content">
 
             <div className="modern-splash-emblem">
-              <div className="modern-splash-emblem-inner">
-                ESM
-              </div>
+              <BrandLogo
+                className="modern-splash-emblem-inner"
+                alt="ESM Rest House emblem"
+              />
             </div>
 
             <div className="modern-splash-heading">

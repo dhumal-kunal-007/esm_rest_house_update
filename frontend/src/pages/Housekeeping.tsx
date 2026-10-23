@@ -5,6 +5,7 @@ import {
 } from "react";
 
 import "../App.css";
+import BrandLogo from "../components/BrandLogo";
 import { apiFetch } from "../api";
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -393,9 +394,7 @@ function Housekeeping({
             ← {tr("Back", "मागे")}
           </button>
 
-          <div className="dashboard-logo">
-            ESM
-          </div>
+          <BrandLogo className="dashboard-logo" />
 
           <div>
             <h1>ESM REST HOUSE</h1>

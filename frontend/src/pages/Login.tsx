@@ -4,6 +4,7 @@ import {
 } from "react";
 
 import "../App.css";
+import BrandLogo from "../components/BrandLogo";
 import {
   apiFetch,
   saveAuthToken,
@@ -552,9 +553,7 @@ function Login({
 
           <div className="login-brand-top">
 
-            <div className="login-brand-mark">
-              ESM
-            </div>
+            <BrandLogo className="login-brand-mark" />
 
             <div>
 

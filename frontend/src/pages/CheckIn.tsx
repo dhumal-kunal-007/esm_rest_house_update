@@ -4,6 +4,7 @@ import {
 } from "react";
 
 import AppModal from "../components/AppModal";
+import BrandLogo from "../components/BrandLogo";
 import { apiFetch } from "../api";
 import type { AppModalType } from "../components/AppModal";
 import { useLanguage } from "../i18n/LanguageContext";
@@ -754,23 +755,12 @@ Accommodation: Full Room`,
         .checkin-emblem {
           width: 58px;
           height: 58px;
-          border-radius: 14px;
-          background:
-            linear-gradient(
-              135deg,
-              #163a63,
-              #285b8f
-            );
-          color: #ffffff;
+          border-radius: 0;
+          background: transparent;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-weight: 800;
-          font-size: 18px;
-          letter-spacing: 1px;
-          box-shadow:
-            0 6px 14px
-            rgba(22, 58, 99, 0.25);
+          box-shadow: none;
         }
 
         .checkin-title-area h1 {
@@ -1413,9 +1403,7 @@ Accommodation: Full Room`,
 
           <div className="checkin-title-area">
 
-            <div className="checkin-emblem">
-              ESM
-            </div>
+            <BrandLogo className="checkin-emblem" />
 
             <div>
               <h1>

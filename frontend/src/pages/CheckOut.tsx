@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api";
 import { getWhatsAppChatUrl } from "../whatsapp";
+import BrandLogo from "../components/BrandLogo";
 import CheckoutFeedback, {
   type CheckoutFeedbackContext,
   type CheckoutFeedbackValues,
@@ -36,6 +37,8 @@ interface EligibleGuest {
   bed_status?: string | null;
   check_in_date: string;
   expected_check_out_date: string;
+  expected_check_out_time?: string | null;
+  delayed_checkout_hourly_rate?: number | string | null;
   allotment_status: string;
   check_in_id?: string;
   check_in_time?: string;
@@ -73,6 +76,7 @@ interface PendingBill {
   bed_number?: number | null;
   check_in_date: string;
   expected_check_out_date: string;
+  has_delayed_checkout?: boolean;
 }
 
 interface BillDetails {
@@ -105,6 +109,10 @@ interface BillDetails {
     bed_number: number | null;
     guest_name: string;
     guest_type: string | null;
+    check_in_date?: string | null;
+    check_out_date?: string | null;
+    check_in_at?: string | null;
+    check_out_at?: string | null;
     daily_rate: number;
     stay_days: number;
     amount: number;
@@ -115,6 +123,15 @@ interface BillDetails {
   other_relation_count?: number;
   other_relation_rate?: number;
   other_relation_charges?: number;
+  delayed_checkout_charges?: number;
+  delayed_checkout_units?: Array<{
+    unit_key: string;
+    room_number: string;
+    bed_number: number | null;
+    billable_hours: number;
+    hourly_rate: number;
+    amount: number;
+  }>;
   pricing_source?: string;
   legacy_daily_rate?: number | null;
   legacy_authorization_reason?: string | null;
@@ -217,7 +234,8 @@ interface FeedbackNotification {
 
 type CheckoutType =
   | "SCHEDULED"
-  | "PRE_CHECKOUT";
+  | "PRE_CHECKOUT"
+  | "DELAYED_CHECKOUT";
 
 type PreCheckoutStep =
   | "REFUND_CHOICE"
@@ -239,6 +257,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
   const [guests, setGuests] = useState<
     EligibleGuest[]
   >([]);
+  const [checkoutSearch, setCheckoutSearch] =
+    useState("");
 
   const [selectedGuest, setSelectedGuest] =
     useState<EligibleGuest | null>(null);
@@ -529,6 +549,25 @@ const CheckOut: React.FC<CheckOutProps> = ({
     }
     return groups;
   }, []);
+  const normalizedCheckoutSearch = checkoutSearch.trim().toLocaleLowerCase();
+  const filteredCheckoutGroups = normalizedCheckoutSearch
+    ? checkoutGroups.filter((guest) => {
+        const searchableValues = [
+          guest.room_number,
+          guest.bed_number === null || guest.bed_number === undefined
+            ? ""
+            : String(guest.bed_number),
+          guest.booking_person_name ?? "",
+          guest.guest_name,
+          ...(guest.room_group_guests ?? []).map(
+            (roomGuest) => roomGuest.guest_name
+          ),
+        ];
+        return searchableValues.some((value) =>
+          value.toLocaleLowerCase().includes(normalizedCheckoutSearch)
+        );
+      })
+    : checkoutGroups;
 
   // ---------------------------------------------------------
   // LOAD PAYMENT FOR SELECTED BOOKING
@@ -651,7 +690,11 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
     resumePendingBillId.current = pendingBill.checkout_id;
     setSelectedGuest(guest);
-    setCheckoutType("SCHEDULED");
+    setCheckoutType(
+      pendingBill.has_delayed_checkout
+        ? "DELAYED_CHECKOUT"
+        : "SCHEDULED"
+    );
     setCompletedCheckout({
       id: pendingBill.checkout_id,
       booking_id: pendingBill.booking_id,
@@ -1061,7 +1104,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
     if (!checkoutType) {
       setError(
-        "Please select Scheduled Check-Out or Pre Check-Out."
+        "Please select a check-out type."
       );
       return;
     }
@@ -1110,7 +1153,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
               remarks.trim() ||
               (checkoutType === "PRE_CHECKOUT"
                 ? "Pre Check-Out"
-                : "Scheduled Check-Out"),
+                : checkoutType === "DELAYED_CHECKOUT"
+                  ? "Delayed Check-Out"
+                  : "Scheduled Check-Out"),
           } : {
             booking_id:
               selectedGuest.booking_id,
@@ -1136,7 +1181,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
               (checkoutType ===
               "PRE_CHECKOUT"
                 ? "Pre Check-Out"
-                : "Scheduled Check-Out"),
+                : checkoutType === "DELAYED_CHECKOUT"
+                  ? "Delayed Check-Out"
+                  : "Scheduled Check-Out"),
           }),
         }
       );
@@ -1194,7 +1241,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
         );
       } else {
         setSuccess(
-          "Scheduled Check-Out completed successfully."
+          checkoutType === "DELAYED_CHECKOUT"
+            ? "Delayed Check-Out completed successfully. The delayed charge will be included in the final bill."
+            : "Scheduled Check-Out completed successfully."
         );
       }
 
@@ -1316,6 +1365,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
       setSuccess(
         checkoutType === "PRE_CHECKOUT"
           ? "Pre Check-Out and final bill completed successfully."
+          : checkoutType === "DELAYED_CHECKOUT"
+            ? "Delayed Check-Out and final bill completed successfully."
           : "Check-Out and final bill completed successfully."
       );
     } catch (err: unknown) {
@@ -1840,12 +1891,35 @@ const CheckOut: React.FC<CheckOutProps> = ({
           <p
             style={{
               color: "#64748b",
-              marginBottom: 22,
+              marginBottom: 16,
             }}
           >
             Guests currently
             checked in
           </p>
+
+          <input
+            type="search"
+            aria-label="Search checkouts by room number or guest name"
+            placeholder="Search by room number or guest name..."
+            value={checkoutSearch}
+            onChange={(event) => setCheckoutSearch(event.target.value)}
+            style={{
+              boxSizing: "border-box",
+              width: "100%",
+              maxWidth: 520,
+              height: 46,
+              marginBottom: 20,
+              padding: "0 15px",
+              border: "1px solid #cbd5e1",
+              borderRadius: 10,
+              background: "#fff",
+              color: "#1e293b",
+              font: "inherit",
+              fontSize: 14,
+              outlineColor: "#3672d5",
+            }}
+          />
 
           {loadingGuests ? (
             <div
@@ -1858,7 +1932,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
               Loading checked-in
               guests...
             </div>
-          ) : guests.length ===
+          ) : checkoutGroups.length ===
             0 ? (
             <div
               style={{
@@ -1870,8 +1944,22 @@ const CheckOut: React.FC<CheckOutProps> = ({
                 color: "#64748b",
               }}
             >
-              No checked-in guests
-              available.
+              {normalizedCheckoutSearch
+                ? "No checked-in guests match your search."
+                : "No checked-in guests available."}
+            </div>
+          ) : filteredCheckoutGroups.length === 0 ? (
+            <div
+              role="status"
+              style={{
+                padding: 30,
+                textAlign: "center",
+                background: "#f8fafc",
+                borderRadius: 12,
+                color: "#64748b",
+              }}
+            >
+              No checked-in guests match your search.
             </div>
           ) : (
             <div
@@ -1939,7 +2027,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
                 </thead>
 
                 <tbody>
-                  {checkoutGroups.map(
+                  {filteredCheckoutGroups.map(
                     (
                       guest
                     ) => (
@@ -2047,10 +2135,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
                               16,
                           }}
                         >
-                          {new Date(
-                            guest.expected_check_out_date
-                          ).toLocaleDateString(
-                            "en-IN"
+                          {formatExpectedCheckout(
+                            guest.expected_check_out_date,
+                            guest.expected_check_out_time
                           )}
                         </td>
 
@@ -2323,7 +2410,7 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     display:
                       "grid",
                     gridTemplateColumns:
-                      "repeat(2, 1fr)",
+                      "repeat(auto-fit, minmax(240px, 1fr))",
                     gap: 20,
                     marginTop:
                       24,
@@ -2401,6 +2488,61 @@ const CheckOut: React.FC<CheckOutProps> = ({
                       is generated
                       after
                       check-out.
+                    </p>
+                  </button>
+
+                  <button
+                    disabled={
+                      Boolean(
+                        selectedGuest.is_early_checkout ||
+                        (selectedGuest.is_final_checkout_group &&
+                          selectedGuest.has_prior_early_checkout)
+                      ) ||
+                      Number(selectedGuest.delayed_checkout_hourly_rate ?? 0) <= 0
+                    }
+                    onClick={() =>
+                      handleCheckoutType("DELAYED_CHECKOUT")
+                    }
+                    style={{
+                      textAlign: "left",
+                      padding: 24,
+                      borderRadius: 14,
+                      border:
+                        checkoutType === "DELAYED_CHECKOUT"
+                          ? "2px solid #b45309"
+                          : "1px solid #fed7aa",
+                      background: "#fff7ed",
+                      cursor:
+                        Number(selectedGuest.delayed_checkout_hourly_rate ?? 0) > 0
+                          ? "pointer"
+                          : "not-allowed",
+                      opacity:
+                        Number(selectedGuest.delayed_checkout_hourly_rate ?? 0) > 0
+                          ? 1
+                          : 0.55,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 800,
+                        color: "#9a3412",
+                      }}
+                    >
+                      DELAYED CHECK-OUT
+                    </div>
+                    <h3>Late Departure</h3>
+                    <p
+                      style={{
+                        color: "#64748b",
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      {Number(selectedGuest.delayed_checkout_hourly_rate ?? 0) > 0
+                        ? `20-minute grace period, then ₹${Number(
+                            selectedGuest.delayed_checkout_hourly_rate
+                          ).toFixed(2)} per started hour. The charge is added to the final bill.`
+                        : "An Admin must configure the hourly fine for this room or bed in Room Customizations."}
                     </p>
                   </button>
 
@@ -2877,6 +3019,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
                 <h2>
                   {checkoutType === "PRE_CHECKOUT"
                     ? "Confirm Pre Check-Out"
+                  : checkoutType === "DELAYED_CHECKOUT"
+                    ? "Confirm Delayed Check-Out"
                     : "Confirm Scheduled Check-Out"}
                 </h2>
 
@@ -2992,7 +3136,9 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     ? "PROCESSING..."
                     : checkoutType === "PRE_CHECKOUT"
                       ? "CONFIRM PRE CHECK-OUT"
-                      : "CONFIRM SCHEDULED CHECK-OUT"}
+                      : checkoutType === "DELAYED_CHECKOUT"
+                        ? "CONFIRM DELAYED CHECK-OUT"
+                        : "CONFIRM SCHEDULED CHECK-OUT"}
                 </button>
               </div>
             )}
@@ -3026,10 +3172,11 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     "#64748b",
                 }}
               >
-                {checkoutType ===
-                "PRE_CHECKOUT"
+                {checkoutType === "PRE_CHECKOUT"
                   ? "Pre Check-Out"
-                  : "Scheduled Check-Out"}{" "}
+                  : checkoutType === "DELAYED_CHECKOUT"
+                    ? "Delayed Check-Out"
+                    : "Scheduled Check-Out"}{" "}
                 completed
                 successfully.
               </p>
@@ -3356,11 +3503,14 @@ const CheckOut: React.FC<CheckOutProps> = ({
 
                 <article className="final-bill-printable">
                   <header className="final-bill-header">
-                    <div>
-                      <div className="final-bill-organization">
-                        ESM REST HOUSE
+                    <div className="final-bill-brand">
+                      <BrandLogo className="final-bill-logo" />
+                      <div>
+                        <div className="final-bill-organization">
+                          ESM REST HOUSE
+                        </div>
+                        <div>Government Rest House</div>
                       </div>
-                      <div>Government Rest House</div>
                     </div>
                     <div className="final-bill-title">
                       <h1>FINAL BILL</h1>
@@ -3397,10 +3547,41 @@ const CheckOut: React.FC<CheckOutProps> = ({
                           : ""}
                       </p>
                       <p>Category: {generatedBill.category_name || "—"}</p>
-                      <p>
-                        Stay: {formatBillDate(generatedBill.check_in_date)} –{" "}
-                        {formatBillDate(generatedBill.check_out_time)}
-                      </p>
+                      {generatedBill.accommodation_rate_details?.length ? (
+                        <div className="final-bill-stay-times">
+                          {(generatedBill.accommodation_type === "DORMITORY"
+                            ? generatedBill.accommodation_rate_details
+                            : generatedBill.accommodation_rate_details.slice(0, 1)
+                          ).map(
+                            (detail, index) => (
+                              <div
+                                className="final-bill-stay-entry"
+                                key={`${detail.room_number}-${detail.bed_number}-${detail.guest_name}-${index}`}
+                              >
+                                <p className="final-bill-stay-check-in">
+                                  {generatedBill.accommodation_type === "DORMITORY" && (
+                                    <strong>{detail.guest_name}: </strong>
+                                  )}
+                                  <strong>Check-in:</strong>{" "}
+                                  {detail.check_in_at ||
+                                    formatBillDate(
+                                      detail.check_in_date ||
+                                        generatedBill.check_in_date
+                                    )}
+                                </p>
+                                <p className="final-bill-stay-check-out">
+                                  <strong>Check-out:</strong>{" "}
+                                  {detail.check_out_at ||
+                                    formatBillDate(
+                                      detail.check_out_date ||
+                                        generatedBill.check_out_time
+                                    )}
+                                </p>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      ) : null}
                       <p>Billable days: {generatedBill.stay_days ?? "—"}</p>
                     </div>
                   </section>
@@ -3481,6 +3662,23 @@ const CheckOut: React.FC<CheckOutProps> = ({
                           <td>{Number(generatedBill.other_relation_charges || 0).toFixed(2)}</td>
                         </tr>
                       )}
+                      {(generatedBill.delayed_checkout_charges || 0) > 0 &&
+                        generatedBill.delayed_checkout_units
+                          ?.filter((unit) => unit.amount > 0)
+                          .map((unit) => (
+                            <tr key={`delayed-${unit.unit_key}`}>
+                              <td>Delayed check-out fine</td>
+                              <td>
+                                {unit.room_number}
+                                {unit.bed_number !== null
+                                  ? ` / Bed ${unit.bed_number}`
+                                  : ""}{" "}
+                                · {unit.billable_hours} hour(s) × ₹
+                                {Number(unit.hourly_rate).toFixed(2)}
+                              </td>
+                              <td>₹{Number(unit.amount).toFixed(2)}</td>
+                            </tr>
+                          ))}
                       <tr>
                         <td>Food charges</td>
                         <td>—</td>
@@ -3543,6 +3741,8 @@ const CheckOut: React.FC<CheckOutProps> = ({
                     ? preCheckoutRefundChoice === "NO"
                       ? "Pre Check-Out → Feedback → Final Bill → WhatsApp Feedback"
                       : "Pre Check-Out → Refund Memo → Feedback → Final Bill → WhatsApp Feedback"
+                    : checkoutType === "DELAYED_CHECKOUT"
+                      ? "Delayed Check-Out → Final Bill with delayed charges → WhatsApp Feedback"
                     : "Scheduled Check-Out → Final Bill → WhatsApp Feedback"}
                 </div>
 
@@ -3697,6 +3897,23 @@ const formatBillDate = (value?: string) => {
   }
 
   return `${day}/${month}/${year}`;
+};
+
+const formatExpectedCheckout = (
+  date: string,
+  time?: string | null
+) => {
+  const formattedDate = new Date(date).toLocaleDateString("en-IN");
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) {
+    return formattedDate;
+  }
+
+  const [hours, minutes] = time.split(":").map(Number);
+  const formattedTime = new Date(2000, 0, 1, hours, minutes).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${formattedDate} · ${formattedTime}`;
 };
 
 // ---------------------------------------------------------
