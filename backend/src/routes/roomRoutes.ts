@@ -2,6 +2,18 @@ import { Router } from "express";
 import { pool } from "../config/db.js";
 
 const router = Router();
+const AUTHORITY_ROLES = [
+  "DY_DIRECTOR",
+  "SUPERINTENDENT",
+  "WELFARE_ORGANISER",
+  "OLC_REST_HOUSE_MANAGER",
+] as const;
+
+const isAuthorityRole = (
+  role: unknown
+): role is (typeof AUTHORITY_ROLES)[number] =>
+  typeof role === "string" &&
+  AUTHORITY_ROLES.some((authorityRole) => authorityRole === role);
 
 interface RequestedDateRange {
   checkIn: string | null;
@@ -2145,6 +2157,272 @@ GET OTHER AUTHORITY ROOMS
 RECEPTIONIST EXPLICIT ALLOTMENT
 =========================================================
 */
+
+router.get(
+  "/authority-management",
+  async (req, res) => {
+    if (req.authUser?.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Only an ADMIN can manage authority rooms.",
+      });
+    }
+
+    try {
+      const [assignedResult, eligibleResult, authorityResult] =
+        await Promise.all([
+          pool.query(
+            `
+            SELECT
+              r.id,
+              r.room_number,
+              rc.category_name,
+              authority.role_name AS authority_role
+            FROM rooms r
+            INNER JOIN room_categories rc
+              ON rc.id = r.category_id
+            INNER JOIN LATERAL (
+              SELECT rp.role_name
+              FROM room_permissions rp
+              WHERE rp.room_id = r.id
+                AND rp.role_name <> 'RECEPTIONIST'
+                AND rp.can_approve = TRUE
+              ORDER BY rp.role_name
+              LIMIT 1
+            ) authority ON TRUE
+            WHERE r.is_active = TRUE
+              AND r.is_bookable = TRUE
+              AND r.total_beds > 0
+            ORDER BY rc.category_name, r.room_number
+            `
+          ),
+          pool.query(
+            `
+            SELECT
+              r.id,
+              r.room_number,
+              rc.category_name
+            FROM rooms r
+            INNER JOIN room_categories rc
+              ON rc.id = r.category_id
+            WHERE r.is_active = TRUE
+              AND r.is_bookable = TRUE
+              AND r.total_beds > 0
+              AND NOT EXISTS (
+                SELECT 1
+                FROM room_permissions rp
+                WHERE rp.room_id = r.id
+                  AND rp.role_name <> 'RECEPTIONIST'
+                  AND rp.can_approve = TRUE
+              )
+            ORDER BY rc.category_name, r.room_number
+            `
+          ),
+          pool.query(
+            `
+            SELECT role_name
+            FROM roles
+            WHERE role_name = ANY($1::text[])
+            ORDER BY role_name
+            `,
+            [AUTHORITY_ROLES]
+          ),
+        ]);
+
+      return res.json({
+        success: true,
+        rooms: assignedResult.rows,
+        eligibleRooms: eligibleResult.rows,
+        authorities: authorityResult.rows.map(
+          (row: { role_name: string }) => row.role_name
+        ),
+      });
+    } catch (error) {
+      console.error("Authority room management fetch error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to load authority room settings.",
+      });
+    }
+  }
+);
+
+router.put(
+  "/authority-management/:roomId",
+  async (req, res) => {
+    if (req.authUser?.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Only an ADMIN can manage authority rooms.",
+      });
+    }
+
+    const roomId = String(req.params.roomId);
+    const authorityRole = req.body?.authority_role;
+    if (!isAuthorityRole(authorityRole)) {
+      return res.status(400).json({
+        success: false,
+        message: "Select a valid authority.",
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const roomResult = await client.query(
+        `
+        SELECT id
+        FROM rooms
+        WHERE id = $1
+          AND is_active = TRUE
+          AND is_bookable = TRUE
+          AND total_beds > 0
+        FOR UPDATE
+        `,
+        [roomId]
+      );
+      if (roomResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          success: false,
+          message: "The selected active, bookable room was not found.",
+        });
+      }
+
+      const roleResult = await client.query(
+        "SELECT 1 FROM roles WHERE role_name = $1",
+        [authorityRole]
+      );
+      if (roleResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          success: false,
+          message: "The selected authority role does not exist.",
+        });
+      }
+
+      await client.query(
+        `
+        UPDATE room_permissions
+        SET can_approve = FALSE
+        WHERE room_id = $1
+          AND role_name <> 'RECEPTIONIST'
+        `,
+        [roomId]
+      );
+      await client.query(
+        `
+        INSERT INTO room_permissions (
+          room_id, role_name, can_book, can_allot, can_approve, emergency_allot
+        )
+        VALUES ($1, 'RECEPTIONIST', FALSE, TRUE, FALSE, TRUE)
+        ON CONFLICT (room_id, role_name)
+        DO UPDATE SET
+          can_book = FALSE,
+          can_allot = TRUE,
+          can_approve = FALSE,
+          emergency_allot = TRUE
+        `,
+        [roomId]
+      );
+      await client.query(
+        `
+        INSERT INTO room_permissions (
+          room_id, role_name, can_book, can_allot, can_approve, emergency_allot
+        )
+        VALUES ($1, $2, FALSE, FALSE, TRUE, FALSE)
+        ON CONFLICT (room_id, role_name)
+        DO UPDATE SET
+          can_approve = TRUE
+        `,
+        [roomId, authorityRole]
+      );
+      await client.query("COMMIT");
+      return res.json({ success: true });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Authority room update error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to save authority room settings.",
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+router.delete(
+  "/authority-management/:roomId",
+  async (req, res) => {
+    if (req.authUser?.role !== "ADMIN") {
+      return res.status(403).json({
+        success: false,
+        message: "Only an ADMIN can manage authority rooms.",
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const roomId = String(req.params.roomId);
+      const roomResult = await client.query(
+        `
+        SELECT id
+        FROM rooms
+        WHERE id = $1
+          AND is_active = TRUE
+          AND is_bookable = TRUE
+        FOR UPDATE
+        `,
+        [roomId]
+      );
+      if (roomResult.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          success: false,
+          message: "The selected active, bookable room was not found.",
+        });
+      }
+
+      await client.query(
+        `
+        UPDATE room_permissions
+        SET can_approve = FALSE
+        WHERE room_id = $1
+          AND role_name <> 'RECEPTIONIST'
+        `,
+        [roomId]
+      );
+      await client.query(
+        `
+        INSERT INTO room_permissions (
+          room_id, role_name, can_book, can_allot, can_approve, emergency_allot
+        )
+        VALUES ($1, 'RECEPTIONIST', TRUE, TRUE, TRUE, FALSE)
+        ON CONFLICT (room_id, role_name)
+        DO UPDATE SET
+          can_book = TRUE,
+          can_allot = TRUE,
+          can_approve = TRUE,
+          emergency_allot = FALSE
+        `,
+        [roomId]
+      );
+      await client.query("COMMIT");
+      return res.json({ success: true });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Authority room removal error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to remove the authority room mapping.",
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
 
 router.get(
   "/authority-rooms",

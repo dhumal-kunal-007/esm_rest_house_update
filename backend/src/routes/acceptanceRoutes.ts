@@ -311,6 +311,22 @@ router.post("/", async (req: Request, res: Response) => {
       ? requestedGuestType
       : null;
 
+    const approvalAuthorityResult = await client.query(
+      `
+      SELECT role_name
+      FROM room_permissions
+      WHERE room_id = $1
+        AND can_approve = TRUE
+      ORDER BY
+        CASE WHEN role_name = 'RECEPTIONIST' THEN 1 ELSE 0 END,
+        role_name
+      LIMIT 1
+      `,
+      [roomId]
+    );
+    const approvalAuthorityRole =
+      approvalAuthorityResult.rows[0]?.role_name ?? null;
+
     if (
       normalizedRoomCategory === "DORMITORY" &&
       !bedId
@@ -763,6 +779,7 @@ router.post("/", async (req: Request, res: Response) => {
           room_id,
           bed_id,
           guest_type,
+          approval_authority_role,
           acceptance_status,
           accepted_at,
           remarks
@@ -773,15 +790,17 @@ router.post("/", async (req: Request, res: Response) => {
           $3,
           $4,
           $5,
+          $6,
           'ACCEPTED',
           CURRENT_TIMESTAMP,
-          $6
+          $7
         )
         ON CONFLICT (booking_id, guest_id)
         DO UPDATE SET
           room_id = EXCLUDED.room_id,
           bed_id = EXCLUDED.bed_id,
           guest_type = EXCLUDED.guest_type,
+          approval_authority_role = EXCLUDED.approval_authority_role,
           acceptance_status = 'ACCEPTED',
           accepted_at = CURRENT_TIMESTAMP,
           remarks = EXCLUDED.remarks
@@ -792,6 +811,7 @@ router.post("/", async (req: Request, res: Response) => {
           room_id,
           bed_id,
           guest_type,
+          approval_authority_role,
           acceptance_status,
           accepted_at,
           remarks,
@@ -803,6 +823,7 @@ router.post("/", async (req: Request, res: Response) => {
           roomId,
           bedId,
           guestType,
+          approvalAuthorityRole,
           remarks,
         ]
       );

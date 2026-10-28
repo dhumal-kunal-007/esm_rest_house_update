@@ -21,6 +21,9 @@ import type {
 } from "./components/AppModal";
 
 const OtherAuthorityRooms = lazy(() => import("./pages/OtherAuthorityRooms"));
+const AuthorityRoomManagement = lazy(
+  () => import("./pages/AuthorityRoomManagement")
+);
 
 import type {
   ExplicitAuthoritySelection,
@@ -341,6 +344,7 @@ function AppContent() {
     | "customize-rates"
     | "create-user"
     | "otherAuthorityRooms"
+    | "authority-room-management"
     | "check-in"
     | "check-out"
     | "housekeeping"
@@ -4909,6 +4913,27 @@ const handleRoomLockedContinue = async (
     );
   }
 
+  if (currentPage === "authority-room-management") {
+    if (loggedInUser.role !== "ADMIN") {
+      return (
+        <main className="customize-rates-screen">
+          <section className="customize-rates-empty">
+            <strong>Administrator access required</strong>
+            <button type="button" onClick={handleBackToDashboard}>
+              ← Dashboard
+            </button>
+          </section>
+        </main>
+      );
+    }
+    return (
+      <>
+        <AuthorityRoomManagement onBack={handleBackToDashboard} />
+        {renderModal()}
+      </>
+    );
+  }
+
   if (
     currentPage ===
     "availability"
@@ -5131,6 +5156,10 @@ const handleRoomLockedContinue = async (
 
         onCustomizeRates={() => {
           setCurrentPage("customize-rates");
+        }}
+
+        onManageAuthorityRooms={() => {
+          setCurrentPage("authority-room-management");
         }}
 
         onOpenOtherAuthorityRooms={() => {

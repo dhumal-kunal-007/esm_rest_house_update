@@ -2097,14 +2097,14 @@ function Booking({
                     </option>
                     <option value="CHILD">
                       {tr(
-                        "Child <25 / Mother / Father",
-                        "२५ वर्षांखालील मूल / आई / वडील"
+                        "Child [ Child (Age < 25) / Mother / Father ]",
+                        "मुल [ मुल (वय < 25) / आई / वडील ]"
                       )}
                     </option>
                     <option value="GUEST">
                       {tr(
-                        "Guest / Other / Child >25",
-                        "अतिथी / इतर / २५ वर्षांवरील मूल"
+                        "Guest [ Guest / Other / Child (Age > 25) ]",
+                        "अतिथी [ अतिथी / इतर / मुल (वय > 25) ]"
                       )}
                     </option>
                   </select>

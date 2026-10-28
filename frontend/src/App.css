@@ -5822,6 +5822,10 @@
   margin-top: 16px;
 }
 
+.dashboard-stat-grid.dashboard-collection-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 
 .dashboard-stat-card {
   min-height: 156px;
@@ -9292,6 +9296,11 @@
   transition:
     box-shadow 0.2s ease,
     border-color 0.2s ease;
+}
+
+.booking-card.dashboard-collections-card {
+  width: 100%;
+  max-width: none;
 }
 
 .booking-card:hover {
@@ -19469,4 +19478,173 @@ input[type="datetime-local"] {
     .final-bill-signatures {
       break-inside: avoid;
     }
+}
+.authority-management-page {
+  width: min(1180px, calc(100% - 32px));
+  margin: 32px auto;
+  color: #172033;
+}
+
+.authority-management-header,
+.authority-management-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.authority-management-header {
+  margin-bottom: 24px;
+}
+
+.authority-management-header p {
+  margin: 0 0 6px;
+  color: #58667d;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.authority-management-header h1,
+.authority-management-section-heading h2 {
+  margin: 0;
+}
+
+.authority-management-header span,
+.authority-management-section-heading p {
+  display: block;
+  margin: 8px 0 0;
+  color: #68758a;
+}
+
+.authority-management-card {
+  margin: 18px 0;
+  padding: 22px;
+  border: 1px solid #e0e6ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(25 42 70 / 6%);
+}
+
+.authority-management-section-heading {
+  margin-bottom: 18px;
+}
+
+.authority-management-section-heading h2 {
+  font-size: 20px;
+}
+
+.authority-management-table-wrap {
+  overflow-x: auto;
+}
+
+.authority-management-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.authority-management-table th,
+.authority-management-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e8edf4;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.authority-management-table th {
+  color: #58667d;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.authority-management-table select,
+.authority-management-add-form select {
+  min-width: 190px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.authority-management-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.authority-management-actions button,
+.authority-management-add-button {
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: #244b86;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.authority-management-actions button.remove {
+  background: #a93636;
+}
+
+.authority-management-actions button:disabled,
+.authority-management-add-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.authority-management-add-form {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.authority-management-add-form label {
+  display: grid;
+  gap: 7px;
+  color: #45536a;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.authority-management-empty {
+  padding: 16px 0;
+  color: #68758a;
+}
+
+.authority-management-message {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+
+.authority-management-message.error {
+  background: #fff0f0;
+  color: #9c2525;
+}
+
+.authority-management-message.success {
+  background: #edfbf2;
+  color: #176637;
+}
+
+@media (max-width: 700px) {
+  .authority-management-page {
+    width: calc(100% - 20px);
+    margin: 18px auto;
+  }
+
+  .authority-management-header {
+    align-items: flex-start;
+  }
+
+  .authority-management-header,
+  .authority-management-section-heading {
+    flex-direction: column;
+  }
+
+  .authority-management-card {
+    padding: 16px;
+  }
 }

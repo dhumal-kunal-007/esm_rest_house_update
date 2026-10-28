@@ -42,7 +42,10 @@ const getBookingAcceptances = async (
             g.relationship,
             g.rank,
 
-            rp.role_name AS responsible_role
+            COALESCE(
+                ba.approval_authority_role,
+                rp.role_name
+            ) AS responsible_role
 
         FROM booking_acceptances ba
 
@@ -151,7 +154,10 @@ router.get(
                         bp.accommodation_amount,
                         bp.additional_member_amount,
                         bp.total_amount,
-                        rp.role_name AS responsible_role,
+                        COALESCE(
+                            ba.approval_authority_role,
+                            rp.role_name
+                        ) AS responsible_role,
                         sm.service_number,
                         sm.rank AS service_member_rank,
                         sm.full_name AS service_member_name,
@@ -192,10 +198,14 @@ router.get(
                         ON ba.booking_id = bk.id
                         AND ba.acceptance_status = 'ACCEPTED'
 
-                    INNER JOIN room_permissions rp
-                        ON rp.room_id = ba.room_id
-                        AND rp.can_approve = TRUE
-                        AND rp.role_name = $1
+                    LEFT JOIN LATERAL (
+                        SELECT role_name
+                        FROM room_permissions
+                        WHERE room_id = ba.room_id
+                            AND can_approve = TRUE
+                        ORDER BY role_name
+                        LIMIT 1
+                    ) rp ON TRUE
 
                     INNER JOIN rooms r
                         ON r.id = ba.room_id
@@ -230,16 +240,21 @@ router.get(
                             FROM booking_acceptances other_ba
                             INNER JOIN rooms other_room
                                 ON other_room.id = other_ba.room_id
-                            LEFT JOIN room_permissions other_rp
-                                ON other_rp.room_id = other_room.id
-                                AND other_rp.can_approve = TRUE
+                            LEFT JOIN LATERAL (
+                                SELECT role_name
+                                FROM room_permissions
+                                WHERE room_id = other_room.id
+                                    AND can_approve = TRUE
+                                ORDER BY role_name
+                                LIMIT 1
+                            ) other_rp ON TRUE
                             WHERE
                                 other_ba.booking_id = bk.id
                                 AND other_ba.acceptance_status = 'ACCEPTED'
-                                AND (
-                                    other_rp.role_name IS NULL
-                                    OR other_rp.role_name <> $1
-                                )
+                                AND COALESCE(
+                                    other_ba.approval_authority_role,
+                                    other_rp.role_name
+                                ) IS DISTINCT FROM $1
                         )
 
                     ORDER BY
@@ -366,11 +381,17 @@ router.get(
                             AND ba.acceptance_status = 'ACCEPTED'
                             AND NOT EXISTS (
                                 SELECT 1
-                                FROM room_permissions rp
-                                WHERE
-                                    rp.room_id = ba.room_id
-                                    AND rp.can_approve = TRUE
-                                    AND rp.role_name = $2
+                                WHERE COALESCE(
+                                    ba.approval_authority_role,
+                                    (
+                                        SELECT rp.role_name
+                                        FROM room_permissions rp
+                                        WHERE rp.room_id = ba.room_id
+                                            AND rp.can_approve = TRUE
+                                        ORDER BY rp.role_name
+                                        LIMIT 1
+                                    )
+                                ) = $2
                             )
                         LIMIT 1
                         `,
@@ -732,14 +753,22 @@ router.post(
                     LEFT JOIN beds b
                         ON b.id = ba.bed_id
 
-                    INNER JOIN room_permissions rp
-                        ON rp.room_id = r.id
-                        AND rp.can_approve = TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT role_name
+                        FROM room_permissions
+                        WHERE room_id = r.id
+                            AND can_approve = TRUE
+                        ORDER BY role_name
+                        LIMIT 1
+                    ) rp ON TRUE
 
                     WHERE
                         ba.booking_id = $1
                         AND ba.acceptance_status = 'ACCEPTED'
-                        AND rp.role_name = $2
+                        AND COALESCE(
+                            ba.approval_authority_role,
+                            rp.role_name
+                        ) = $2
                     `,
                     [
                         bookingId,
@@ -774,6 +803,7 @@ router.post(
                         r.room_number,
 
                         COALESCE(
+                            ba.approval_authority_role,
                             rp.role_name,
                             ''
                         ) AS responsible_role
@@ -1231,9 +1261,14 @@ router.post(
                     INNER JOIN rooms r
                         ON r.id = ba.room_id
 
-                    INNER JOIN room_permissions rp
-                        ON rp.room_id = r.id
-                        AND rp.can_approve = TRUE
+                    LEFT JOIN LATERAL (
+                        SELECT role_name
+                        FROM room_permissions
+                        WHERE room_id = r.id
+                            AND can_approve = TRUE
+                        ORDER BY role_name
+                        LIMIT 1
+                    ) rp ON TRUE
 
                     WHERE
                         ba.booking_id = $1
@@ -1241,7 +1276,10 @@ router.post(
                         AND ba.acceptance_status =
                             'ACCEPTED'
 
-                        AND rp.role_name = $2
+                        AND COALESCE(
+                            ba.approval_authority_role,
+                            rp.role_name
+                        ) = $2
                     `,
                     [
                         bookingId,
@@ -1273,6 +1311,7 @@ router.post(
                         r.room_number,
 
                         COALESCE(
+                            ba.approval_authority_role,
                             rp.role_name,
                             ''
                         ) AS responsible_role

@@ -16,6 +16,7 @@ interface DashboardProps {
   onResumeBooking: (bookingId: string) => void;
   onAvailability: () => void;
   onCustomizeRates: () => void;
+  onManageAuthorityRooms: () => void;
   onOpenOtherAuthorityRooms: () => void;
   onCheckIn: () => void;
   onCheckOut: () => void;
@@ -158,6 +159,7 @@ function Dashboard({
   onResumeBooking,
   onAvailability,
   onCustomizeRates,
+  onManageAuthorityRooms,
   onOpenOtherAuthorityRooms,
   onCheckIn,
   onCheckOut,
@@ -1240,7 +1242,7 @@ function Dashboard({
         </section>
 
         {user.role === "ADMIN" && (
-          <section className="booking-card">
+          <section className="booking-card dashboard-collections-card">
             <div className="booking-section-title">
               <span>₹</span>
               <div>
@@ -1261,7 +1263,7 @@ function Dashboard({
                 {collectionError}
               </p>
             ) : collections ? (
-              <div className="dashboard-stat-grid">
+              <div className="dashboard-stat-grid dashboard-collection-grid">
                 <article className="dashboard-stat-card stat-green">
                   <span className="dashboard-stat-label">Today's Collection</span>
                   <strong className="dashboard-stat-value">
@@ -1590,6 +1592,21 @@ function Dashboard({
                         ? "खोलीची क्षमता आणि दर व्यवस्थापित करा"
                         : "Manage room capacities and approved rates"}
                     </small>
+                  </span>
+                  <b>→</b>
+                </button>
+              )}
+
+              {user.role === "ADMIN" && (
+                <button
+                  type="button"
+                  className="dashboard-action action-purple"
+                  onClick={onManageAuthorityRooms}
+                >
+                  <span className="action-symbol">R</span>
+                  <span>
+                    <strong>Authority Rooms</strong>
+                    <small>Manage room approval authorities</small>
                   </span>
                   <b>→</b>
                 </button>
