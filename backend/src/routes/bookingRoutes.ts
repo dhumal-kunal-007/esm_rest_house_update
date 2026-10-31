@@ -278,7 +278,7 @@ router.post("/", parseBookingFiles, async (req, res) => {
             }
 
             if (
-                !["SELF", "WIFE", "SON", "DAUGHTER", "MOTHER", "FATHER", "OTHER"].includes(
+                !["SELF", "WIFE", "CHILD", "GUEST", "SON", "DAUGHTER", "MOTHER", "FATHER", "OTHER"].includes(
                     String(guest.relationship ?? "").trim().toUpperCase()
                 )
             ) {
@@ -1116,7 +1116,7 @@ router.put("/:bookingId", parseBookingFiles, async (req, res) => {
             !["MALE", "FEMALE", "CHILD", "GUEST"].includes(String(guest.gender).toUpperCase()) ||
             (["CHILD", "GUEST"].includes(String(guest.gender).toUpperCase()) &&
                 !["MALE", "FEMALE"].includes(String(guest.actualGender ?? "").toUpperCase())) ||
-            !["SELF", "WIFE", "SON", "DAUGHTER", "MOTHER", "FATHER", "OTHER"]
+            !["SELF", "WIFE", "CHILD", "GUEST", "SON", "DAUGHTER", "MOTHER", "FATHER", "OTHER"]
                 .includes(String(guest.relationship).toUpperCase()) ||
             !/^\d{10}$/.test(String(guest.mobile ?? "")) ||
             (guest.aadhaar && !/^\d{12}$/.test(String(guest.aadhaar))) ||

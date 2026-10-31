@@ -1488,25 +1488,33 @@ function AppContent() {
       const savedBooking = data.booking;
       const pricing = data.pricing;
       const guests = (savedBooking.guests ?? []).map(
-        (guest: Record<string, unknown>) => ({
-          id: String(guest.id),
-          name: String(guest.guest_name ?? ""),
-          gender: String(guest.gender ?? ""),
-          actualGender: String(guest.gender ?? ""),
-          ...(["CHILD", "GUEST"].includes(String(guest.guest_category ?? "").toUpperCase())
-            ? { gender: String(guest.guest_category).toUpperCase() }
-            : {}),
-          relationship: String(guest.relationship ?? ""),
-          mobile: String(guest.mobile_number ?? ""),
-          address: String(guest.address ?? ""),
-          relationshipProofType: String(
-            guest.relationship_proof_type ?? ""
-          ),
-          relationshipProofNumber: String(
-            guest.relationship_proof_number ?? ""
-          ),
-          aadhaar: "",
-        })
+        (guest: Record<string, unknown>) => {
+          const guestCategory = String(
+            guest.guest_category ?? ""
+          ).toUpperCase();
+          const isChildOrGuest = ["CHILD", "GUEST"].includes(guestCategory);
+
+          return {
+            id: String(guest.id),
+            name: String(guest.guest_name ?? ""),
+            gender: isChildOrGuest
+              ? guestCategory
+              : String(guest.gender ?? ""),
+            actualGender: String(guest.gender ?? ""),
+            relationship: isChildOrGuest
+              ? guestCategory
+              : String(guest.relationship ?? ""),
+            mobile: String(guest.mobile_number ?? ""),
+            address: String(guest.address ?? ""),
+            relationshipProofType: String(
+              guest.relationship_proof_type ?? ""
+            ),
+            relationshipProofNumber: String(
+              guest.relationship_proof_number ?? ""
+            ),
+            aadhaar: "",
+          };
+        }
       );
 
       const booking: BookingDraft = {

@@ -18,11 +18,8 @@ import { useLanguage } from "../i18n/LanguageContext";
 const relationshipOptions = [
   "SELF",
   "WIFE",
-  "SON",
-  "DAUGHTER",
-  "MOTHER",
-  "FATHER",
-  "OTHER",
+  "CHILD",
+  "GUEST",
 ] as const;
 
 const relationshipProofOptions = [
@@ -669,13 +666,15 @@ function Booking({
             }
 
             if (field === "gender") {
+              const relationshipCategory = ["CHILD", "GUEST"].includes(
+                guest.relationship
+              )
+                ? guest.relationship
+                : value;
               return {
                 ...guest,
-                gender: value,
-                actualGender:
-                  value === "MALE" || value === "FEMALE"
-                    ? value
-                    : guest.actualGender,
+                gender: relationshipCategory,
+                actualGender: value,
               };
             }
 
@@ -687,6 +686,7 @@ function Booking({
                 return {
                   ...guest,
                   relationship: value,
+                  gender: guest.actualGender,
                   name: serviceman.name,
                   mobile: serviceman.mobile,
                   address: serviceman.address,
@@ -701,6 +701,10 @@ function Booking({
 
                 relationship:
                   value,
+
+                gender: ["CHILD", "GUEST"].includes(value)
+                  ? value
+                  : guest.actualGender,
 
                 relationshipProofType:
                   "",
@@ -2080,7 +2084,11 @@ function Booking({
                     {tr("Gender *", "लिंग *")}
                   </label>
                   <select
-                    value={guest.gender}
+                    value={
+                      ["CHILD", "GUEST"].includes(guest.gender)
+                        ? guest.actualGender
+                        : guest.gender
+                    }
                     onChange={(event) =>
                       updateGuest(index, "gender", event.target.value)
                     }
@@ -2095,36 +2103,8 @@ function Booking({
                     <option value="FEMALE">
                       {tr("Female", "महिला")}
                     </option>
-                    <option value="CHILD">
-                      {tr(
-                        "Child [ Child (Age < 25) / Mother / Father ]",
-                        "मुल [ मुल (वय < 25) / आई / वडील ]"
-                      )}
-                    </option>
-                    <option value="GUEST">
-                      {tr(
-                        "Guest [ Guest / Other / Child (Age > 25) ]",
-                        "अतिथी [ अतिथी / इतर / मुल (वय > 25) ]"
-                      )}
-                    </option>
                   </select>
                 </div>
-                {["CHILD", "GUEST"].includes(guest.gender) && (
-                  <div className="form-field">
-                    <label>{tr("Actual Gender *", "वास्तविक लिंग *")}</label>
-                    <select
-                      value={guest.actualGender}
-                      onChange={(event) =>
-                        updateGuest(index, "actualGender", event.target.value)
-                      }
-                      required
-                    >
-                      <option value="">{tr("Select actual gender", "वास्तविक लिंग निवडा")}</option>
-                      <option value="MALE">{tr("Male", "पुरुष")}</option>
-                      <option value="FEMALE">{tr("Female", "महिला")}</option>
-                    </select>
-                  </div>
-                )}
 
                 <div className="form-field full">
                   <label>{tr("Address", "पत्ता")}</label>
@@ -2186,29 +2166,14 @@ function Booking({
                                 "WIFE",
                                 "पत्नी"
                               )
-                            : relationship === "SON"
+                            : relationship === "CHILD"
                             ? tr(
-                                "SON",
-                                "मुलगा"
-                              )
-                            : relationship === "DAUGHTER"
-                            ? tr(
-                                "DAUGHTER",
-                                "मुलगी"
-                              )
-                            : relationship === "MOTHER"
-                            ? tr(
-                                "MOTHER",
-                                "आई"
-                              )
-                            : relationship === "FATHER"
-                            ? tr(
-                                "FATHER",
-                                "वडील"
+                                "Child [ Child (Age < 25) / Mother / Father ]",
+                                "मुल [ मुल (वय < 25) / आई / वडील ]"
                               )
                             : tr(
-                                "OTHER (GUEST)",
-                                "इतर (अतिथी)"
+                                "Guest [ Guest / Other / Child (Age > 25) ]",
+                                "अतिथी [ अतिथी / इतर / मुल (वय > 25) ]"
                               );
 
                         return (
