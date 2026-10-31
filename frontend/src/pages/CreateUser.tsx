@@ -131,6 +131,11 @@ function CreateUser({
     null
   );
 
+  const [resetPassword, setResetPassword] = useState("");
+  const [confirmResetPassword, setConfirmResetPassword] = useState("");
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [resetPasswordError, setResetPasswordError] = useState("");
+
 
   /* =================================
      DATABASE USERS
@@ -158,6 +163,7 @@ function CreateUser({
     type:
       | "deactivate"
       | "permanent"
+      | "reset-password"
       | "success"
       | null;
 
@@ -322,6 +328,70 @@ function CreateUser({
 
     }
 
+  };
+
+  const openPasswordReset = (user: User) => {
+    setResetPassword("");
+    setConfirmResetPassword("");
+    setResetPasswordError("");
+    setConfirmation({
+      type: "reset-password",
+      user,
+    });
+  };
+
+  const submitPasswordReset = async () => {
+    const user = confirmation.user;
+    if (!user || resettingPassword) {
+      return;
+    }
+    if (resetPassword.length < 6) {
+      setResetPasswordError(
+        tr("Password must contain at least 6 characters.", "पासवर्ड किमान ६ अक्षरांचा असावा.")
+      );
+      return;
+    }
+    if (resetPassword !== confirmResetPassword) {
+      setResetPasswordError(
+        tr("Passwords do not match.", "दोन्ही पासवर्ड जुळत नाहीत.")
+      );
+      return;
+    }
+
+    setResettingPassword(true);
+    setResetPasswordError("");
+    try {
+      const response = await apiFetch(
+        `http://localhost:5000/api/users/${encodeURIComponent(user.id)}/password`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: resetPassword }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Failed to reset user password.");
+      }
+
+      setResetPassword("");
+      setConfirmResetPassword("");
+      setConfirmation({
+        type: "success",
+        message: tr(
+          `Password reset successfully for ${user.name}.`,
+          `${user.name} यांचा पासवर्ड यशस्वीपणे बदलला.`
+        ),
+      });
+    } catch (resetError) {
+      setResetPasswordError(
+        resetError instanceof Error
+          ? resetError.message
+          : tr("Failed to reset user password.", "वापरकर्त्याचा पासवर्ड बदलता आला नाही.")
+      );
+    } finally {
+      setResettingPassword(false);
+    }
   };
 
 
@@ -1302,119 +1372,133 @@ function CreateUser({
 
                     {/* ACTION */}
 
-                    {user.active ? (
-
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "8px",
+                        alignItems: "stretch",
+                      }}
+                    >
                       <button
                         type="button"
-                        onClick={() =>
-                          handleDeleteUser(
-                            user
-                          )
-                        }
-                        disabled={
-                          currentUserId ===
-                          user.id
-                        }
+                        onClick={() => openPasswordReset(user)}
                         style={{
-                          border:
-                            "1px solid #d6a3a3",
-                          background:
-                            currentUserId ===
-                            user.id
-                              ? "#f3f3f3"
-                              : "#fff5f5",
-                          color:
-                            currentUserId ===
-                            user.id
-                              ? "#999999"
-                              : "#a12a2a",
-                          padding:
-                            "9px 14px",
-                          borderRadius:
-                            "8px",
-                          fontWeight:
-                            700,
-                          fontSize:
-                            "12px",
-                          cursor:
-                            currentUserId ===
-                            user.id
-                              ? "not-allowed"
-                              : "pointer",
+                          border: "1px solid #b8c9dd",
+                          background: "#f4f8fc",
+                          color: "#244b70",
+                          padding: "9px 14px",
+                          borderRadius: "8px",
+                          fontWeight: 700,
+                          fontSize: "12px",
+                          cursor: "pointer",
                         }}
                       >
-
-                        {
-                          currentUserId ===
-                          user.id
-
-                            ? tr(
-                                "CURRENT USER",
-                                "सध्याचा वापरकर्ता"
-                              )
-
-                            : tr(
-                                "DEACTIVATE",
-                                "निष्क्रिय करा"
-                              )
-                        }
-
+                        {tr("RESET PASSWORD", "पासवर्ड बदला")}
                       </button>
 
-                    ) : (
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handlePermanentRemove(
-                            user
-                          )
-                        }
-                        disabled={
-                          removingUserId ===
-                          user.id
-                        }
-                        style={{
-                          border:
-                            "1px solid #c98b8b",
-                          background:
-                            "#fff0f0",
-                          color:
-                            "#8f1d1d",
-                          padding:
-                            "9px 14px",
-                          borderRadius:
-                            "8px",
-                          fontWeight:
-                            700,
-                          fontSize:
-                            "12px",
-                          cursor:
+                      {user.active ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDeleteUser(
+                              user
+                            )
+                          }
+                          disabled={
+                            currentUserId ===
+                            user.id
+                          }
+                          style={{
+                            border:
+                              "1px solid #d6a3a3",
+                            background:
+                              currentUserId ===
+                              user.id
+                                ? "#f3f3f3"
+                                : "#fff5f5",
+                            color:
+                              currentUserId ===
+                              user.id
+                                ? "#999999"
+                                : "#a12a2a",
+                            padding:
+                              "9px 14px",
+                            borderRadius:
+                              "8px",
+                            fontWeight:
+                              700,
+                            fontSize:
+                              "12px",
+                            cursor:
+                              currentUserId ===
+                              user.id
+                                ? "not-allowed"
+                                : "pointer",
+                          }}
+                        >
+                          {
+                            currentUserId ===
+                            user.id
+                              ? tr(
+                                  "CURRENT USER",
+                                  "सध्याचा वापरकर्ता"
+                                )
+                              : tr(
+                                  "DEACTIVATE",
+                                  "निष्क्रिय करा"
+                                )
+                          }
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handlePermanentRemove(
+                              user
+                            )
+                          }
+                          disabled={
                             removingUserId ===
                             user.id
-                              ? "not-allowed"
-                              : "pointer",
-                        }}
-                      >
-
-                        {
-                          removingUserId ===
-                          user.id
-
-                            ? tr(
-                                "REMOVING...",
-                                "काढून टाकत आहे..."
-                              )
-
-                            : tr(
-                                "PERMANENTLY REMOVE",
-                                "कायमस्वरूपी काढा"
-                              )
-                        }
-
-                      </button>
-
-                    )}
+                          }
+                          style={{
+                            border:
+                              "1px solid #c98b8b",
+                            background:
+                              "#fff0f0",
+                            color:
+                              "#8f1d1d",
+                            padding:
+                              "9px 14px",
+                            borderRadius:
+                              "8px",
+                            fontWeight:
+                              700,
+                            fontSize:
+                              "12px",
+                            cursor:
+                              removingUserId ===
+                              user.id
+                                ? "not-allowed"
+                                : "pointer",
+                          }}
+                        >
+                          {
+                            removingUserId ===
+                            user.id
+                              ? tr(
+                                  "REMOVING...",
+                                  "काढून टाकत आहे..."
+                                )
+                              : tr(
+                                  "PERMANENTLY REMOVE",
+                                  "कायमस्वरूपी काढा"
+                                )
+                          }
+                        </button>
+                      )}
+                    </div>
 
                   </div>
 
@@ -1858,6 +1942,84 @@ function CreateUser({
 
               </>
 
+            )}
+
+            {confirmation.type === "reset-password" &&
+              confirmation.user && (
+              <>
+                <h2 style={{ margin: "0 0 8px" }}>
+                  {tr("Reset Password", "पासवर्ड बदला")}
+                </h2>
+                <p style={{ margin: "0 0 20px", opacity: 0.75 }}>
+                  {tr(
+                    `Set a new password for ${confirmation.user.name} (@${confirmation.user.username}).`,
+                    `${confirmation.user.name} (@${confirmation.user.username}) यांच्यासाठी नवीन पासवर्ड सेट करा.`
+                  )}
+                </p>
+
+                <div className="form-group">
+                  <label htmlFor="reset-new-password">
+                    {tr("New password", "नवीन पासवर्ड")}
+                  </label>
+                  <input
+                    id="reset-new-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={resetPassword}
+                    onChange={(event) => setResetPassword(event.target.value)}
+                    disabled={resettingPassword}
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="reset-confirm-password">
+                    {tr("Re-enter new password", "नवीन पासवर्ड पुन्हा टाका")}
+                  </label>
+                  <input
+                    id="reset-confirm-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmResetPassword}
+                    onChange={(event) => setConfirmResetPassword(event.target.value)}
+                    disabled={resettingPassword}
+                  />
+                </div>
+                <small style={{ display: "block", marginTop: "8px", opacity: 0.7 }}>
+                  {tr("Minimum 6 characters.", "किमान ६ अक्षरे आवश्यक.")}
+                </small>
+                {resetPasswordError && (
+                  <p role="alert" style={{ color: "#a12a2a", margin: "12px 0 0" }}>
+                    {resetPasswordError}
+                  </p>
+                )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    gap: "10px",
+                    marginTop: "24px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="back-button"
+                    onClick={() => setConfirmation({ type: null })}
+                    disabled={resettingPassword}
+                  >
+                    {tr("Cancel", "रद्द करा")}
+                  </button>
+                  <button
+                    type="button"
+                    className="create-user-button"
+                    onClick={() => void submitPasswordReset()}
+                    disabled={resettingPassword}
+                  >
+                    {resettingPassword
+                      ? tr("Saving...", "जतन होत आहे...")
+                      : tr("Save Password", "पासवर्ड जतन करा")}
+                  </button>
+                </div>
+              </>
             )}
 
 

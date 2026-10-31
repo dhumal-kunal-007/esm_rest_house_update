@@ -63,6 +63,57 @@ router.get("/", async (_req: Request, res: Response) => {
     }
 });
 
+router.put(
+    "/:userId/password",
+    async (req: Request, res: Response) => {
+        if (req.authUser?.role !== "ADMIN") {
+            return res.status(403).json({
+                success: false,
+                message: "Only an ADMIN can reset user passwords.",
+            });
+        }
+
+        const password = req.body?.password;
+        if (typeof password !== "string" || password.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: "Password must contain at least 6 characters.",
+            });
+        }
+
+        try {
+            const passwordHash = await bcrypt.hash(password, 10);
+            const updateResult = await pool.query(
+                `
+                UPDATE users
+                SET password_hash = $2,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = $1
+                RETURNING id
+                `,
+                [req.params.userId, passwordHash]
+            );
+            if (updateResult.rowCount === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found.",
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: "Password reset successfully.",
+            });
+        } catch (error) {
+            console.error("Reset user password error:", error);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to reset user password.",
+            });
+        }
+    }
+);
+
 
 /* =========================================
    CREATE NEW USER
